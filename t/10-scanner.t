@@ -7,16 +7,22 @@ use Log::Any::Adapter 'TAP';
 use Log::Any '$log';
 use Try::Tiny;
 
-use_ok( 'Language::FormulaEngine::Parser' ) or BAIL_OUT;
+use_ok( 'Language::FormulaEngine::Scanner' ) or BAIL_OUT;
 
 # capture error message of code that should die
 sub error_of(&) { my $sub= shift; try { $sub->(); 'No Exception Thrown' } catch { $_ } }
 
-sub new_parser_ok {
+sub new_scanner_ok {
 	my $ctor_args= shift;
-	unshift @$ctor_args, _scanner_tokenizer => \&Language::FormulaEngine::Parser::_default_tokenizer_debug
-		if $log->is_debug;
-	new_ok( 'Language::FormulaEngine::Parser', $ctor_args, @_ );
+	my $scanner= new_ok( 'Language::FormulaEngine::Scanner', $ctor_args, @_ );
+	# Add debugging
+	my $tokenizer= $scanner->_tokenizer;
+	$scanner->_tokenizer(sub {
+		my @ret= &$tokenizer; 
+		$log->debugf('token=%s (consumed %d) "%s"', $ret[1], $ret[2], $ret[0]);
+		return @ret;
+	});
+	$scanner;
 }
 
 my %_escape_mapping= ("\0" => '\0', "\n" => '\n', "\r" => '\r', "\t" => '\t', "\f" => '\f', "\b" => '\b', "\a" => '\a', "\e" => '\e', "\\" => '\\' );
@@ -42,7 +48,8 @@ sub test_scanner {
 			[ num => 34,       0, 9 ],
 		],
 		[ "12A_1e-5,foOO(bar,34,baz)",
-			[ ident => '12A_1e', 0, 0 ],
+			[ num => '12',       0, 0 ],
+			[ ident => 'A_1e',   0, 2 ],
 			[ '-' => '-',        0, 6 ],
 			[ num => 5,          0, 7 ],
 			[ ',' => ',',        0, 8 ],
@@ -87,7 +94,7 @@ sub test_scanner {
 	for (@tests) {
 		my ($str, @tokens)= @$_;
 		subtest '"'.escape_str($str).'"' => sub {
-			my $p= new_parser_ok( [ input => $str ], 'new parser' );
+			my $p= new_scanner_ok( [ input => $str ], 'new scanner' );
 			$p->next_token;
 			my $i= 1;
 			for (@tokens) {

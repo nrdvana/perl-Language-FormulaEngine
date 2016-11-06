@@ -6,12 +6,36 @@ use List::Util qw( min max );
 use Log::Any '$log';
 use namespace::clean;
 
+=head1 SYNOPSIS
+
+  my $parser= Language::FormulaEngine::Parser->new(input => $text);
+  $parser->parse;
+  
+  # To subclass:
+  package Foo {
+    use Moo;
+    extends 'Language::FormulaEngine::Parser';
+    
+    # for small changes to scanner, change tokenizer coderef
+    has '+_scanner_tokenizer' => ( deault => \&... );
+    # for major changes to scanner, override next_token method
+    sub next_token { ... }  # for major changes to scanner
+    
+    # for changes to parser, override method corresponding to parse rule
+    sub parse_..._expr { ... }
+  }
+
 =head1 DESCRIPTION
 
 This is both a scanner and a parser, but the logic is divided into distinct
 scanning vs. parsing functions to make it easy to subclass.
 
 =head2 PARSER
+
+The parser can be invoked by calling L</parse>, or just by accessing the
+L</parse_tree> attribute.  It will consume tokens via the L</next_token>
+method as needed.  The default implementation will throw an exception unless
+all tokens are consumed (resulting in a final token with type 'eof').
 
 =cut
 
@@ -20,6 +44,17 @@ has input        => ( is => 'rw' );
 has parse_tree   => ( is => 'lazy' );
 has functions    => ( is => 'rw', default => sub { {} } );
 has variables    => ( is => 'rw', default => sub { {} } ); 
+
+=head2 parse
+
+  $parse_tree= $parser->parse;
+
+Read tokens from scanner to build a parse tree.  Returns the parse tree, which is
+composed of L<Language::FormulaEngine::Parser::Node> objects.
+Most nodes of the parse tree are function call nodes, because basic operations
+like 'x*y' are converted to a function as 'mul(x,y)'.
+
+=cut
 
 sub _build_parse_tree {
 	my $self= shift;
@@ -50,7 +85,8 @@ The grammar of the default parser is as follows:
 
 C<ident>, C<num>, C<str>, and all the punctuation symbols are tokens that come from the scanner.
 
-These are implemented as function calls which consume C<input>, and return parse nodes:
+These are implemented as function calls which consume tokens via L</next_token>,
+and return parse nodes:
 
 =over
 
@@ -75,15 +111,6 @@ These are implemented as function calls which consume C<input>, and return parse
 =back
 
 =cut
-
-my @_CMP_OPS= (qw(  =  ==  !=  <>  >  >=  <  <=  ), "\x{2260}", "\x{2264}", "\x{2265}");
-my @_MATH_OPS= qw(  +  -  *  /  );
-my @_LOGIC_OPS= qw(  and  or  not  !  );
-my @_LIST_OPS= ( ',', qw/ (  ) / );
-my %_KEYWORDS= (
-	(map { $_ => $_ } @_CMP_OPS, @_MATH_OPS, @_LOGIC_OPS, @_LIST_OPS),
-	'=' => '==', '<>' => '!=', "\x{2260}" => '!=', "\x{2264}" => '<=', "\x{2265}" => '>='
-);
 
 sub parse_expr { shift->parse_or_expr; }
 
@@ -343,6 +370,7 @@ place for the conversion.
 =cut
 
 package Language::FormulaEngine::Parser::NumberNode {
+	
 	use strict;
 	use warnings;
 	use parent -norequire => 'Language::FormulaEngine::ParseNode';
@@ -367,364 +395,6 @@ sub new_number {
 
 =back
 
-=head1 SCANNER
-
-The scanner methods consume input to generate the next value for token_type and token_value.
-These are always fields of the Parser object, and the accessor methods are read-only.
-
-(Why not return token objects? because updating hash fields is much more efficient
-than dynamically allocating objects for each token and calling methods throughout
-the parser.)
-
-The scanner must also maintain enough buffer context to support the L</token_context> and
-L</token_context_tty> methods.
-
-=head2 Scanner Internals
-
-Scanner implementations are not required to use these attributes, but they are the
-basis for the default implementation.
-
-=over
-
-=item _scanner_buffer
-
-A string of input where the current token was found.
-
-=item _scanner_buffer_row_col
-
-0-based line number and 0-based column number of the start of the token buffer,
-used for calculating token_row_col.
-
-=item _scanner_token_ofs
-
-Character offset of the start of the token within the _scanner_buffer.
-
-=item _scanner_ofs
-
-Character offset of the first character beyond the end of the token within the
-_scanner_buffer.
-
-=back
-
 =cut
 
-has _scanner_tokenizer      => ( is => 'rw', init_arg => undef, default => sub { \&_default_tokenizer } );
-has _scanner_buffer         => ( is => 'rw', init_arg => undef, default => sub { '' } );
-has _scanner_buffer_row_col => ( is => 'rw', init_arg => undef, default => sub { [0,0] } );
-has _scanner_token_ofs      => ( is => 'rw', init_arg => undef, default => sub { 0 } );
-has _scanner_ofs            => ( is => 'rw', init_arg => undef, default => sub { 0 } );
-
-=head2 Current-Token Attributes
-
-These attributes should be written directly as hash fields.
-The read-only accessor is provided for convenience.
-
-=over
-
-=item token_type
-
-A string describing the type of the current token.  The default types
-are 'ident', 'num', 'eof', and each punctuation symbol is its own type; i.e.
-types of '+', '-', '*', '/'.
-
-=item token_value
-
-Returns the text value of the current token.  Punctuation have identical type
-and value.  For 'ident' and 'num', token_value is the identifier or number.
-
-=cut
-
-has token_type         => ( is => 'ro', init_arg => undef );
-has token_value        => ( is => 'ro', init_arg => undef );
-
-=head2 token_row_col
-
-  my ($row, $col)= $parser->token_row_col();
-
-Returns the 0-based row number and column number of the current token
-as a two-element list.
-(calculated from scanner_buffer_row_col and scanner_ofs)
-
-=cut
-
-sub token_row_col {
-	my $self= shift;
-	my ($row, $col)= @{ $self->_scanner_buffer_row_col };
-	my $buf= $self->_scanner_buffer;
-	my $ofs= $self->_scanner_token_ofs // $self->_scanner_ofs;
-	# If there are any newlines from the start of the buffer to the start of the token...
-	my $line_end= rindex($buf, "\n", $ofs-1);
-	if ($line_end >= 0) {
-		# ...then add up the number of newlines and re-calculate the column
-		#my $line_start= $line_end+1;
-		$row+= (substr($buf, 0, $line_end+1) =~ /\n/);
-		$col= $ofs - ($line_end+1);
-	}
-	else {
-		$col += $ofs;
-	}
-	return ($row, $col);
-}
-
-=head2 token_context
-
-  die "Expected something else at ".$parser->token_context()."\n";
-  # same as:
-  die "Expected something else at 'blah blah' on line 15, char 12\n";
-
-Returns a single-string view of where the token occurs in the buffer.
-This is useful for single-line "die" messages.
-
-=cut
-
-sub token_context {
-	my $self= shift;
-	my $buf= $self->_scanner_buffer;
-	my $ofs= $self->_scanner_token_ofs // $self->_scanner_ofs;
-	# If we don't have a buffer, there's nothing to show, so print "end of input".
-	length($buf // '') > $ofs
-		or return '(end of input)';
-	my $context= substr($buf, $ofs, 20);
-	$context =~ s/\n.*//s; # remove subsequent lines
-	my ($row, $col)= $self->token_row_col();
-	return sprintf '"%s" at line %d char %d', $context, $row+1, $col+1;
-}
-
-=head2 token_context_tty
-
-  print $parser->token_context_tty();
-  # is like:
-  print "blah blah blah token blah blah\n";
-  print "               ^^^^^\n";
-  print " (line 15, char 16)\n";
-
-More advanced view of the input string, printed on two lines with the second
-marking the token within its context.  This is only useful with a fixed-width
-font in a multi-line context.
-
-This method also supports various options for formatting.
-
-=cut
-
-sub token_context_tty {
-	my ($self, %args)= @_;
-	my $buf= $self->scanner_buffer;
-	my ($token_ofs, $scanner_ofs)= ($self->_scanner_token_ofs, $self->_scanner_ofs);
-	my ($prefix, $token, $suffix)= ('','','');
-	# If we don't have a buffer, there's nothing to show, so print "end of input".
-	if (!length($buf)) {
-		$suffix= '(end of input)';
-	}
-	# If no token, then can't underline it
-	elsif (!defined $token_ofs) {
-		$prefix= substr($buf, 0, $scanner_ofs);
-		$suffix= substr($buf, $scanner_ofs);
-	}
-	else {
-		$prefix= substr($buf, 0, $token_ofs);
-		$token=  substr($buf, $token_ofs, $scanner_ofs-$token_ofs);
-		$suffix= substr($buf, $scanner_ofs);
-	}
-	
-	# Truncate prefix and suffix at line endings
-	$prefix =~ s/.*\n//s;
-	$suffix =~ s/\n.*//s;
-	# Limit lengths of prefix and suffix and token
-	my $max_width= $args{max_width} // 78;
-	if (length($prefix) + length($token) > $max_width) {
-		my $min_token= min(length($token), $args{min_token} // 30);
-		# truncate prefix, or token, or both
-		if (length($prefix) > $max_width - $min_token) {
-			substr($prefix, 0, -($max_width - $min_token))= '';
-		}
-		if (length($prefix) + length($token) > $max_width) {
-			substr($token, -($max_width - length($prefix) - length($token)))= ''; 
-		}
-	}
-	if (length($prefix) + length($token) + length($suffix) > $max_width) {
-		substr($suffix, -($max_width - length($prefix) - length($token)))= '';
-	}
-	my ($row, $col)= $self->token_row_col();
-	return sprintf "%s%s%s\n%s%s\n (line %d char %d)\n",
-		$prefix, $token, $suffix,
-		' ' x length($prefix), '^' x length($token),
-		$row+1, $col+1;
-}
-
-sub next_token {
-	my $self= shift;
-	
-	# If already reached end of input, throw an exception.
-	return 0
-		if 'eof' eq ($self->{token_type}//'');
-	
-	# Clear the current token
-	undef @{$self}{'token_type','token_value','_scanner_token_ofs'};
-	# Detect the next token
-	while (1) { # loop while type is ''
-		if ($self->{_scanner_ofs} >= length($self->{_scanner_buffer})) {
-			unless ($self->_scanner_grow_buffer) {
-				$self->{token_type}= 'eof';
-				$self->{token_value}= '';
-				return 0;
-			}
-		}
-		(my ($consumed, $type, $val)= $self->_scanner_tokenizer->($self, substr($self->{_scanner_buffer}, $self->{_scanner_ofs})))
-			or die "Unknown syntax at ".$self->token_context."\n";
-		$consumed > 0
-			or croak "Tokenizer consumed zero characters";
-		defined $type
-			or croak "Tokenizer did not return token_type";
-		$self->{_scanner_ofs}+= $consumed;
-		if ($type ne '') { # whitespace isn't returned
-			$self->{_scanner_token_ofs}= $self->{_scanner_ofs} - $consumed;
-			@{$self}{'token_type','token_value'}= ($type,$val);
-			return 1;
-		}
-	}
-}
-
-sub consume_token {
-	my $self= shift;
-	croak "Can't consume EOF"
-		if $self->{token_type} eq 'eof';
-	my $val= $self->{token_value};
-	$self->next_token;
-	return $val;
-}
-
-sub _scanner_grow_buffer {
-	my $self= shift;
-	# The default implementation just loads the "input" string as the scanner buffer.
-	# Subclasses could read blocks from a file handle, or etc.
-	if (!length $self->{_scanner_buffer} && length $self->input) {
-		$self->{_scanner_buffer}= $self->input;
-		return 1;
-	}
-	return 0;
-}
-
-my @default_rules= map { _coerce_scanner_rule($_) } (
-	[ 'Whitespace',
-		qr/(\s+)/,
-		sub { return length($_[1]), '', ''; }
-	],
-	[ 'Numeric literal',
-		qr/([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)(?:[^A-Za-z0-9_.]|$)/,
-		sub { return length($_[1]), 'num', $_[1]; }
-	],
-	[ 'Keyword',
-		do { my $kw_regex= join('|', map { "\Q$_\E" } sort { length($b) <=> length($a) } keys %_KEYWORDS); qr/($kw_regex)/i },
-		sub { my $kw= $_KEYWORDS{lc($_[1])}; return length($_[1]), $kw, $_[1]; }
-	],
-	[ 'Identifier',
-		qr/([A-Za-z0-9_.]+)/i,
-		sub { return length($_[1]), 'ident', $_[1]; }
-	],
-	[ 'String',
-		qr/("[^"]*"|'[^']*')/,
-		sub {
-			my $str= substr($_[1], 1, -1);
-			return length($_[1]), 'str', $str;
-		}
-	]
-);
-my $default_rules_regex= _combine_rule_regexes(\@default_rules);
-sub _default_tokenizer {
-	my $self= shift;
-	
-	# Compare against all regexes at once
-	my @cap= ($_[0] =~ $default_rules_regex)
-		or return; # throws syntax error
-	
-	for my $rule (@default_rules) {
-		my @rule_cap= splice @cap, 0, $rule->{capture_count};
-		if (grep { defined } @rule_cap) {
-			return $rule->{handler}->($self, @rule_cap);
-		}
-	}
-	croak "BUG: combined rule regex matched, but no captures were collected";
-}
-
-sub _default_tokenizer_debug {
-	my $self= shift;
-	
-	# Compare against all regexes at once
-	my @cap= ($_[0] =~ $default_rules_regex);
-	$log->tracef("captured %s", \@cap);
-	@cap or return; # throws syntax error
-	
-	for my $rule (@default_rules) {
-		my @rule_cap= splice @cap, 0, $rule->{capture_count};
-		if (grep { defined } @rule_cap) {
-			my @ret= $rule->{handler}->($self, @rule_cap);
-			$log->debugf("found %s '%s', consumed %d", $rule->{name}, $ret[2], $ret[0]);
-			return @ret;
-		}
-	}
-	croak "BUG: combined rule regex matched, but no captures were collected";
-}
-
-sub _combine_rule_regexes {
-	my $rules= shift;
-	my $re= join '|', map { $_->{pattern} } @$rules;
-	return qr/^(?:$re)/;
-}
-
-sub _coerce_scanner_rules {
-	my $thing= shift;
-	ref $thing eq 'ARRAY' or croak "Expected arrayref of scanner rules";
-	[ map { _coerce_scanner_rule($_) } @$thing ];
-}
-
-sub _coerce_scanner_rule {
-	my $thing= shift;
-	ref $thing or croak "Expected arrayref or hashref for scanner rule";
-	if (ref $thing eq 'ARRAY') {
-		@$thing == 3 and !ref $thing->[0] and ref($thing->[1]) eq 'Regexp' and ref $thing->[2] eq 'CODE'
-			or croak 'Arrayref scanner rule must be [$name, qr/pattern/, \&handler ]';
-		$thing= { name => $thing->[0], pattern => $thing->[1], handler => $thing->[2] };
-	}
-	elsif (ref $thing eq 'HASH') {
-		defined $thing->{pattern} or croak "Scanner rule is missing pattern";
-		defined $thing->{handler} or croak "Scanner rule is missing handler";
-		$thing->{name} //= "$thing->{pattern}";
-	}
-	else {
-		croak "Can't coerce ".ref($thing)." to scanner rule";
-	}
-	"" =~ /|$thing->{pattern}/;
-	$thing->{capture_count}= $#+;
-	$thing;
-}
-
-=head1 PARSER OBJECT
-
-The parser object takes a stream of tokens returned from a Scanner, and builds
-a parse tree.  The tree is composed of
-Language::FormulaEngine::ParseNode objects.  Most nodes
-of the parse tree are function call nodes, because basic operations like 'x*y'
-are converted to a function as 'mul(x,y)'.
-
-=head2 parse( $scanner )
-
-Read tokens from scanner to build a parse tree.  Returns a hashref of
-
-  {
-  parse_tree => $FormulaEngine_ParseNode,
-  fn_deps    => \%set_of_function_names,
-  var_deps   => \%set_of_var_names,
-  sym_deps   => \%set_of_literals,
-  }
-
-=cut
-
-use Moo;
-use Carp;
-use Try::Tiny;
-
-sub info { $_[0]{info} }
-
-
-
-
+1;
