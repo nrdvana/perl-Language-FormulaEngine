@@ -12,6 +12,48 @@ use namespace::clean;
   my $scanner= Language::FormulaEngine::Scanner->new(input => "...");
   my ($token_type, $token_value)= $scanner->next_token
     or die "Syntax error at ".$scanner->token_context;
+  
+  # To subclass:
+  package Foo {
+    use Moo;
+    extends 'Language::FormulaEngine::Scanner';
+    
+    # To change the set of operators/keywords:
+    sub _build_keywords { ... }
+    
+    # To make changes to regexes of existing rules:
+    sub _build_rule_... {
+      my $rule= shift->SUPER::_build_rule_...;
+      $rule->{pattern}= ...;
+      return $rule;
+    }
+    
+    # To add new token types:
+    sub _build_rules {
+      my $rules= shift->SUPER::_build_rules();
+      push @$rules, { name => ..., pattern => ..., handler => ... };
+      return $rules;
+    }
+    
+    # For more complex parsing than can be done with regexes,
+    # build your own tokenizer:
+    sub _build__tokenizer {
+      return sub {
+        my ($scanner, $input)= @_;
+        ...;
+        return $chars_consumed, $type, $value;
+      };
+    }
+    
+    # For context-sensitive scanner states, swap the tokenizer at runtime
+    my $other_tokenizer= __PACKAGE__->_build_tokenizer_for_rules(\@other_rules);
+    sub _build_rule_foo {
+       { name => "Foo", pattern => ..., handler => sub {
+           shift->_tokenizer($other_tokenizer);
+           return length(shift), '', '';
+       }}
+    }
+  }
 
 =head1 DESCRIPTION
 
@@ -440,12 +482,10 @@ sub _build_tokenizer_for_rules {
 	};
 }
 
-our %_package_tokenizer;
+our %_tokenizer_cache;
 sub _build__tokenizer {
 	my $self= shift;
-	$_package_tokenizer{ref $self} //= do {
-		$self->_build_tokenizer_for_rules($self->_build_rules);
-	};
+	$_tokenizer_cache{ref $self} //= $self->_build_tokenizer_for_rules($self->_build_rules);
 }
 
 1;
