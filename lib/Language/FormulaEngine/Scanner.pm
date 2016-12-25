@@ -100,7 +100,7 @@ my @_MATH_OPS= qw(  +  -  *  /  );
 my @_LOGIC_OPS= qw(  and  or  not  !  );
 my @_LIST_OPS= ( ',', '(', ')' );
 
-sub _build_keywords {
+sub keywords {
 	return {
 		(map { $_ => $_ } @_CMP_OPS, @_MATH_OPS, @_LOGIC_OPS, @_LIST_OPS),
 		'=' => '==', '<>' => '!=', "\x{2260}" => '!=',
@@ -108,78 +108,69 @@ sub _build_keywords {
 	};
 }
 
-sub _build_rule_whitespace {
-	return {
-		name    => 'Whitespace',
-		pattern => qr/(\s+)/,
-		# Return an empty string to indicate "not a token"
-		handler => sub { return length($_[1]), '', ''; },
-	};
-}
-sub _build_rule_number {
-	return {
-		name    => 'Numeric Literal',
-		pattern => qr/([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)/,
-		handler => sub { return length($_[1]), 'num', $_[1]; },
-	};
-}
-sub _build_rule_keyword {
-	my $keywords= shift->_build_keywords;
+sub _build_rules {
+	my $class= shift;
+	my $keywords= $class->keywords;
 	my $kw_regex= join '|', map { "\Q$_\E" }
 		sort { length($b) <=> length($a) } # longest keywords get priority
 		keys %$keywords;
-	return {
-		name    => 'Keyword',
-		pattern => qr/($kw_regex)/i,
-		handler => sub {
-			my $kw= $keywords->{lc($_[1])};
-			return length($_[1]), $kw, $_[1];
-		},
-	};
-}
-sub _build_rule_identifier {
-	return {
-		name    => 'Identifier',
-		pattern => qr/([A-Za-z_][A-Za-z0-9_.]*)/,
-		handler => sub { return length($_[1]), 'ident', $_[1]; }
-	};
-}
-sub _build_rule_string {
-	return {
-		name    => 'String Literal',
-		pattern => qr/("[^"]*"|'[^']*')/,
-		handler => sub {
-			my $str= substr($_[1], 1, -1);
-			return length($_[1]), 'str', $str;
-		}
-	};
-}
-
-sub _build_rules {
-	my $class= shift;
 	return [ # order matters, for priority
-		$class->_build_rule_whitespace,
-		$class->_build_rule_number,
-		$class->_build_rule_keyword,
-		$class->_build_rule_identifier,
-		$class->_build_rule_string,
+		{ name => 'Whitespace',
+		  # Return an empty string to indicate "not a token"
+		  match => sub { $_[0]{_buffer} =~ /\G(\s+)/gc ? ('' => '') : (); }
+		},
+		{ name => 'Numeric Literal',
+		  match => sub { $_[0]{_buffer} =~ /\G([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)/gc ? (num => $1) : () }
+		},
+		{ name => 'Keyword',
+		  match => sub { $_[0]{_buffer} =~ /\G($kw_regex)/gc ? ( $keywords->{lc $1} => $1 ) : () }
+		},
+		{ name => 'Identifier',
+		  match => sub { $_[0]{_buffer} =~ /\G([A-Za-z_][A-Za-z0-9_.]*)/gc ? ( ident => $1 ) : () }
+		},
+		{ name => 'String Literal',
+		  match => sub {
+				# Single or double quoted string, using Pascal-style repeated quotes for escaping
+				return () unless $_[0]{_buffer} =~ /\G(?:"((?:[^"]|"")*)"|'((?:[^']|'')*)')/gc;
+				my $str= defined $1? $1 : $2;
+				$str =~ s/""/"/g if defined $1;
+				$str =~ s/''/'/g if defined $2;
+				return str => $str;
+			}
+		},
 	];
 }
 
 =back
-
-You can change the scanner patterns by overriding the C<_build_rule_*> methods,
-or overriding the _build_rules method, or create a custom L</_tokenizer> with your
-own rule set.  Beware that the rule regexes are compiled into a single tokenizer
-coderef ONCE PER PACKAGE, so if you want dynamic behavior (like a configurable
-'rules' attribute per instance) you'll need to make additional changes to the
-implementation.
 
 =head1 ATTRIBUTES
 
 =head2 input
 
 A string of input to parse.
+
+=head2 rules
+
+An arrayref of rules which will be checked in sequence against the input
+buffer.  Each rule is of the form:
+
+  {
+    name => "Name of tokenizer",
+    match => sub {
+      my $self= shift;
+      if ($self->{_buffer} =~ /\G some pattern /gcx) {
+        return token_type => $token_value;
+      } else {
+        return ();
+      }
+    }
+  }
+
+When writing a custom rule, make sure your regex begins with \G (to match
+starting from the current position) and sets C</gc> flags.
+
+The matcher should return a pair of token type and token value if it matches,
+and an empty list otherwise.
 
 =head2 token_type
 
@@ -196,6 +187,7 @@ Attribute is undef until the first time L</next_token> is called.
 =cut
 
 has input              => ( is => 'rw' );
+has rules              => ( is => 'rw', builder => 1 );
 has token_type         => ( is => 'ro', init_arg => undef );
 has token_value        => ( is => 'ro', init_arg => undef );
 
@@ -213,7 +205,8 @@ sub token_row_col {
 	my $self= shift;
 	my ($row, $col)= @{ $self->_buffer_row_col };
 	my $buf= $self->_buffer;
-	my $ofs= $self->_token_ofs // $self->_buffer_ofs;
+	my $ofs= $self->_token_pos;
+	$ofs= $self->_buffer_pos unless defined $ofs;
 	# If there are any newlines from the start of the buffer to the start of the token...
 	my $line_end= rindex($buf, "\n", $ofs-1);
 	if ($line_end >= 0) {
@@ -338,33 +331,38 @@ sub next_token {
 	
 	# If already reached end of input, throw an exception.
 	return 0
-		if 'eof' eq ($self->{token_type}//'');
+		if 'eof' eq ($self->{token_type}||'');
 	
 	# Detect the next token
-	while (1) { # loop while type is ''
+	find_token: while (1) { # loop while type is ''
 		# Clear the current token
-		undef @{$self}{'token_type','token_value','_token_ofs'};
+		undef @{$self}{'token_type','token_value','_token_pos'};
 		
 		# Check for end of buffer
-		if ($self->{_buffer_ofs} >= length($self->{_buffer})) {
+		my $pos= pos $self->{_buffer} || 0;
+		if ($pos >= length($self->{_buffer})) {
 			unless ($self->_grow_buffer) {
 				$self->{token_type}= 'eof';
 				$self->{token_value}= '';
 				return 0;
 			}
+			$pos= pos $self->{_buffer} || 0;
 		}
-		(my ($consumed, $type, $val)= $self->_tokenizer->($self))
-			or die "Unknown syntax at ".$self->token_context."\n";
-		$consumed > 0
-			or croak "Tokenizer consumed zero characters";
-		defined $type
-			or croak "Tokenizer did not return token_type";
-		$self->{_buffer_ofs}+= $consumed;
-		if ($type ne '') { # whitespace isn't returned
-			$self->{_token_ofs}= $self->{_buffer_ofs} - $consumed;
-			@{$self}{'token_type','token_value'}= ($type,$val);
-			return 1;
+		my ($type, $val);
+		for my $rule (@{ $self->rules }) {
+			if (($type, $val)= $rule->{match}->($self)) {
+				$log->tracef('Matched %s type=%s value=%s _buffer_pos=%d', $rule->{name}, $type, $val, pos $self->{_buffer})
+					if $log->is_trace;
+				pos $self->{_buffer} > $pos
+					or croak "Tokenizer consumed zero characters";
+				# Ignore tokens whose type is ''
+				next find_token if $type eq '';
+				
+				@{$self}{'token_type','token_value','_token_pos'}= ($type,$val,$pos);
+				return 1;
+			}
 		}
+		die "Unknown syntax at ".$self->token_context."\n";
 	}
 }
 
@@ -392,19 +390,6 @@ basis for the default implementation.
 
 =over
 
-=item _tokenizer
-
-Set this to a coderef of your choice which obeys the following API:
-
-  sub {
-    my ($scanner, $input_string)= @_;
-    ...
-    return ($number_consumed_chars, $token_type, $token_value);
-  }
-
-The default value is built I<AND CACHED ONCE PER PACKAGE> by L</_build_tokenizer>
-from the rules returned by L</_build_rules>.
-
 =item _buffer
 
 A string of input where the current token was found.
@@ -414,13 +399,13 @@ A string of input where the current token was found.
 0-based line number and 0-based column number of the start of the token buffer,
 used for calculating L</token_row_col>.
 
-=item _buffer_ofs
+=item _buffer_pos
 
 Character offset of the first character beyond the end of the token within the
 C<_buffer>.  This is defined as C<<pos($self->{_buffer}>>, or in other words
 we store the position using perl's regex internals.
 
-=item _token_ofs
+=item _token_pos
 
 Character offset of the start of the token within the C<_buffer>.
 If L</token_type> is undefined then this attribute is also undefined.
@@ -433,11 +418,10 @@ Returns true if it obtained more input, or false at the end of the input stream.
 
 =cut
 
-has _tokenizer      => ( is => 'rw', lazy => 1, builder => 1, init_arg => undef );
 has _buffer         => ( is => 'rw', init_arg => undef, default => sub { '' } );
 has _buffer_row_col => ( is => 'rw', init_arg => undef, default => sub { [0,0] } );
-sub _buffer_ofs        { pos($_[0]{_buffer})= $_[1] if @_ > 1; pos($_[0]{_buffer}) }
-has _token_ofs      => ( is => 'rw', init_arg => undef, default => sub { 0 } );
+sub _buffer_pos        { pos($_[0]{_buffer})= $_[1] if @_ > 1; pos($_[0]{_buffer}) }
+has _token_pos      => ( is => 'rw', init_arg => undef, default => sub { 0 } );
 
 sub _grow_buffer {
 	my $self= shift;
@@ -449,47 +433,6 @@ sub _grow_buffer {
 		return 1;
 	}
 	return 0;
-}
-
-sub _combine_rule_regexes {
-	my $rules= shift;
-	my $re= join '|', map { $_->{pattern} } @$rules;
-	# Do "global" matching to preserve position, and don't reset position on match failure
-	return qr/\G(?^gc:$re)/;
-}
-
-sub _build_tokenizer_for_rules {
-	my ($class, $rules)= @_;
-	for (@$rules) {
-		defined $_->{pattern} or croak "Scanner rule is missing pattern";
-		defined $_->{handler} or croak "Scanner rule is missing handler";
-		$_->{name} //= "$_->{pattern}";
-		"" =~ /|$_->{pattern}/; # Bind to empty string to count capture groups
-		$_->{capture_count}= $#+;
-	}
-	my $token_regex= _combine_rule_regexes($rules);
-	return sub {
-		my $self= shift;
-		
-		# Compare against all regexes at once
-		$self->{_buffer} =~ $token_regex
-			or return; # throws syntax error
-		my $ofs= 0;
-		for my $rule (@$rules) {
-			my $end_ofs= $ofs + $rule->{capture_count} - 1;
-			if (grep { defined } @-[$ofs .. $end_ofs]) {
-				return $rule->{handler}->($self, map { substr($self->{_buffer}, $-[$_], $+[$_]-$-[$_]+1) } $ofs .. $end_ofs);
-			}
-			$ofs+= $rule->{capture_count};
-		}
-		croak "BUG: combined rule regex matched, but no captures were collected";
-	};
-}
-
-our %_tokenizer_cache;
-sub _build__tokenizer {
-	my $self= shift;
-	$_tokenizer_cache{ref $self} //= $self->_build_tokenizer_for_rules($self->_build_rules);
 }
 
 1;

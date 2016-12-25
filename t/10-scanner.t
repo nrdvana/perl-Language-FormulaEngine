@@ -12,19 +12,6 @@ use_ok( 'Language::FormulaEngine::Scanner' ) or BAIL_OUT;
 # capture error message of code that should die
 sub error_of(&) { my $sub= shift; try { $sub->(); 'No Exception Thrown' } catch { $_ } }
 
-sub new_scanner_ok {
-	my $ctor_args= shift;
-	my $scanner= new_ok( 'Language::FormulaEngine::Scanner', $ctor_args, @_ );
-	# Add debugging
-	my $tokenizer= $scanner->_tokenizer;
-	$scanner->_tokenizer(sub {
-		my @ret= &$tokenizer; 
-		$log->debugf('token=%s (consumed %d) "%s"', $ret[1], $ret[2], $ret[0]);
-		return @ret;
-	});
-	$scanner;
-}
-
 my %_escape_mapping= ("\0" => '\0', "\n" => '\n', "\r" => '\r', "\t" => '\t', "\f" => '\f', "\b" => '\b', "\a" => '\a', "\e" => '\e', "\\" => '\\' );
 sub escape_char { exists $_escape_mapping{$_[0]}? $_escape_mapping{$_[0]} : sprintf((ord $_[0] <= 0xFF)? "\\x%02X" : "\\x{%X}", ord $_[0]); }
 sub escape_str { my $str= shift; $str =~ s/([^\x20-\x7E])/escape_char($1)/eg; $str; }
@@ -94,7 +81,7 @@ sub test_scanner {
 	for (@tests) {
 		my ($str, @tokens)= @$_;
 		subtest '"'.escape_str($str).'"' => sub {
-			my $p= new_scanner_ok( [ input => $str ], 'new scanner' );
+			my $p= new_ok( 'Language::FormulaEngine::Scanner', [ input => $str ], 'new scanner' );
 			$p->next_token;
 			my $i= 1;
 			for (@tokens) {
