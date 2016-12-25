@@ -15,10 +15,11 @@ use Carp;
 use Try::Tiny;
 use Scalar::Util 'looks_like_number';
 use POSIX 'ceil', 'floor';
-use Math::Trig;
 use namespace::clean;
 
 *_clean_eval= *Language::FormulaEngine::Compiler::_CleanEval::_clean_eval;
+
+our $VERSION= '0.00_1';
 
 # ABSTRACT - Compile a parse tree into perl code
 
@@ -72,34 +73,43 @@ stable API for your users, or just mask out certain functions, or rename them,
 this gives you a quick way to do that.  (much easier than creating packages with
 all *but* specific functions)
 
+You may also specify a number to request the API from a specific version of this
+module.  For example
+
+  $compiler->api(1)
+
+gives you exactly the functions that were available in Language::FormulaEngine
+version 1.0
+
 =cut
 
 has api => ( is => 'rw', coerce => \&_coerce_api );
 
 # History of APIs
-my @STABLE_API= (
-	[qw( and or not sum mul div if negative )] # TODO: list exact methods in namespace as of version 1
-);
+sub _api_for_version {
+	my $version= shift;
+	# Can't support future versions
+	croak "Invalid API version '$version'"
+		unless $version <= $VERSION;
+	# As new versions change things, return @foo if version > x
+	return { map { $_ => $_ } qw( and or not sum mul div if negative ) };
+}
 
 sub _coerce_api {
-	my ($self, $arg)= @_;
+	my ($arg)= @_;
 	return $arg if ref $arg eq 'HASH';
 	return { map { $_ => $_ } @$arg } if ref $arg eq 'ARRAY';
-	
-	# Else its a scalar, which should be a version number
-	die "Invalid API version '$arg'"
-		unless ($arg-1) >= 0 && ($arg-1) < @STABLE_API && $arg == int($arg);
-	return { map { $_ => $_ } @{$STABLE_API[$arg]} };
+	# Version number?
+	return _api_for_version($arg) if Scalar::Util::looks_like_number($arg);
+	# Else no clue....
+	croak "Can't coerce '$arg' into an API specification";
 }
 
 =head1 METHODS
 
 =head2 compile( $parse_tree )
 
-Compile a parse tree.  Returns a string of perl code defining a coderef, which
-can be eval'd to get a callable coderef.
-(or a compiler error, if you made any mistakes in your inlined functions  :-)
-
+Compile a parse tree.  
 Note that the code may refer to a "C<$compiler>" variable which must be in scope
 when the code is eval'd.  Because of this reference, make sure to never store a
 reference to the compiled code within the compiler itself, or you get a circular
@@ -110,13 +120,17 @@ reference.
 sub compile {
 	my ($self, $parse_tree)= @_;
 	my $perl= $self->inline_node($parse_tree);
-	"sub { use warnings FATAL => qw( uninitialized numeric ); my \$vars= shift; $perl }"
+	$perl= "sub { use warnings FATAL => qw( uninitialized numeric ); my \$vars= shift; $perl }";
+	$self->_clean_eval($perl);
 }
 
 =head2 inline_node( $parse_node )
 
 Generate perl source code for a parse node (and by extension, everything within the tree) by
 dispatching to the appropriate C<inline_node_NodeClass> method.
+
+The code returned by the default implementation requires variables C<$vars>
+and C<$compiler> to be in scope, in order to be evaluated.
 
 =cut
 
@@ -134,7 +148,7 @@ sub inline_node {
 
 =head2 inline_node_FuncCallNode
 
-Generate perl code to represent a function call int he parse tree.
+Generate perl code to represent a function call in the parse tree.
 
 Note that FormulaEngine represents almost every structure in the grammar
 as a "function call".  Operations like "C<+>" are converted to "C<sum()>"
@@ -220,7 +234,8 @@ Generate perl code for a numeric constant.
 This actually generates a string literal, to protect against loss of leading
 or trailing zeroes, and to ensure it is interpreted as decimal.
 
-If you don't like this behavior, feel free to override it.
+If you don't like this behavior, (like if you want octal to be a feature of
+your derived language) feel free to override it.
 
 =cut
 

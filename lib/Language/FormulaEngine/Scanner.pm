@@ -317,7 +317,7 @@ sub token_context_tty {
 
 =head2 next_token
 
-  my ($token_type, $token_value)= $scanner->next_value;
+  my ($token_type, $token_value)= $scanner->next_token;
   # -or-
   if ($scanner->next_token) {
     # can now use ->token_type and ->token_value
@@ -353,7 +353,7 @@ sub next_token {
 				return 0;
 			}
 		}
-		(my ($consumed, $type, $val)= $self->_tokenizer->($self, substr($self->{_buffer}, $self->{_buffer_ofs})))
+		(my ($consumed, $type, $val)= $self->_tokenizer->($self))
 			or die "Unknown syntax at ".$self->token_context."\n";
 		$consumed > 0
 			or croak "Tokenizer consumed zero characters";
@@ -417,7 +417,8 @@ used for calculating L</token_row_col>.
 =item _buffer_ofs
 
 Character offset of the first character beyond the end of the token within the
-C<_buffer>.
+C<_buffer>.  This is defined as C<<pos($self->{_buffer}>>, or in other words
+we store the position using perl's regex internals.
 
 =item _token_ofs
 
@@ -435,13 +436,14 @@ Returns true if it obtained more input, or false at the end of the input stream.
 has _tokenizer      => ( is => 'rw', lazy => 1, builder => 1, init_arg => undef );
 has _buffer         => ( is => 'rw', init_arg => undef, default => sub { '' } );
 has _buffer_row_col => ( is => 'rw', init_arg => undef, default => sub { [0,0] } );
-has _buffer_ofs     => ( is => 'rw', init_arg => undef, default => sub { 0 } );
+sub _buffer_ofs        { pos($_[0]{_buffer})= $_[1] if @_ > 1; pos($_[0]{_buffer}) }
 has _token_ofs      => ( is => 'rw', init_arg => undef, default => sub { 0 } );
 
 sub _grow_buffer {
 	my $self= shift;
 	# The default implementation just loads the "input" string as the scanner buffer.
 	# Subclasses could read blocks from a file handle, or etc.
+	# Don't forget to preserve pos() on the string.
 	if (!length $self->{_buffer} && length $self->input) {
 		$self->{_buffer}= $self->input;
 		return 1;
@@ -452,7 +454,8 @@ sub _grow_buffer {
 sub _combine_rule_regexes {
 	my $rules= shift;
 	my $re= join '|', map { $_->{pattern} } @$rules;
-	return qr/^(?:$re)/;
+	# Do "global" matching to preserve position, and don't reset position on match failure
+	return qr/\G(?^gc:$re)/;
 }
 
 sub _build_tokenizer_for_rules {
@@ -469,14 +472,15 @@ sub _build_tokenizer_for_rules {
 		my $self= shift;
 		
 		# Compare against all regexes at once
-		my @cap= ($_[0] =~ $token_regex)
+		$self->{_buffer} =~ $token_regex
 			or return; # throws syntax error
-		
+		my $ofs= 0;
 		for my $rule (@$rules) {
-			my @rule_cap= splice @cap, 0, $rule->{capture_count};
-			if (grep { defined } @rule_cap) {
-				return $rule->{handler}->($self, @rule_cap);
+			my $end_ofs= $ofs + $rule->{capture_count} - 1;
+			if (grep { defined } @-[$ofs .. $end_ofs]) {
+				return $rule->{handler}->($self, map { substr($self->{_buffer}, $-[$_], $+[$_]-$-[$_]+1) } $ofs .. $end_ofs);
 			}
+			$ofs+= $rule->{capture_count};
 		}
 		croak "BUG: combined rule regex matched, but no captures were collected";
 	};

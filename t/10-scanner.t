@@ -89,7 +89,7 @@ sub test_scanner {
 			[ str => 'foo',   0, 6 ],
 			[ str => 'foo\\', 0, 11 ],
 		],
-	  );
+	);
 
 	for (@tests) {
 		my ($str, @tokens)= @$_;

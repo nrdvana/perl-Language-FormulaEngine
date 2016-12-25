@@ -6,38 +6,12 @@ use Module::Runtime 'require_module';
 
 our $VERSION= '0.900';
 
-use Exporter 'import';
-our @EXPORT_OK= ( 'coerce_formula', 'looks_like_variable', 'looks_like_symbol' );
-
-our $DEFAULT_INSTANCE;
-sub default_instance {
-	$DEFAULT_INSTANCE ||= __PACKAGE__->new();
-}
-
-package
-Language::FormulaEngine::Exports {
-
-	sub coerce_formula {
-		(defined $_[0] and !ref $_[0])? Language::FormulaEngine::default_instance()->compile($_[0]) : $_[0];
-	}
-
-	# TODO: call to default insatnce's parser
-	sub looks_like_variable {
-		($_[0] =~ /^[a-z_][a-z0-9_.]*$/)? 1 : 0
-	}
-
-	# TODO: call to default insatnce's parser
-	sub looks_like_symbol {
-		($_[0] =~ /^[A-Z0-9][A-Z0-9_.]*$/)? 1 : 0
-	}
-};
-
-# ABSTRACT - Parser/Compiler for simple expression language like used for spreadsheets
+# ABSTRACT - Extensible parser/compiler for simple expression language like used for spreadsheets
 
 =head1 SYNOPSIS
 
   my $vars= { foo => 1, bar => 3.14159265358979, baz => 42 };
-
+  
   my $engine= Language::FormulaEngine->new();
   my $formula= $engine->compile( 'if(foo, round(bar, 3), baz*100)' );
   print $formula->evaluate($vars);
@@ -45,39 +19,69 @@ Language::FormulaEngine::Exports {
   
   package MyContext {
     use Moo;
-    extends 'Language::FormulaEngine::Compiler::FnContext1';
+    extends 'Language::FormulaEngine::Compiler';
     sub fn_customfunc { shift; print "arguments are ".join(', ', @_)."\n"; }
   };
   my $engine= Language::FormulaEngine->new(compiler => MyContext->new);
   my $formula= $engine->compile( 'CustomFunc(baz,2,3)' );
-  $formula->evaluate($vars); # prints "arguments are 42, 2, 3\n"
+  $formula->($vars); # prints "arguments are 42, 2, 3\n"
 
 =head1 DESCRIPTION
 
 This class is a parser and code generator for a simple-ish expression language.
 
-It safely parses un-trusted text, reports friendly error messages, generates perl coderefs
-for fast repeated execution, and gives you some metadata about what it compiled,
-and is reasonably extensible/reusable if you have similar needs but want to override
-my syntax choices.  The parse tree is very light-weight, and the module has very few
-dependencies, making it a good fit for lots of high-performance use cases.  It uses
-a top-down parse which is easier to work with and gives more helpful error messages,
-though could get a bit slow if you extend the grammar too much.  (for simple grammars
-like this, it's pretty fast)
+The intent of this module is to help you write domain-specific languages for
+"power users" who are not programmers (or maybe just not trusted) to give them the
+ability to implement custom calculations or boolean logic in their system without
+pestering you constantly for code changes or endless additional checkbox-activated
+features.
 
 The default language is pure-functional, in that each operation has exactly one return
 value, and cannot modify variables.  There is no assignment, loops, or nested data
 structures, though these can be added if you try hard enough.  (but if you want them,
-there are some other modules you might consider.  L</"SEE ALSO">)
+there are L<some other modules|/"SEE ALSO"> you might consider.)
 
-See L<Language::FormulaEngine::Parser> for the grammer details.
+See L<Language::FormulaEngine::Parser> for the grammer details of the default language.
+The default language is not Excel-compatible, but could be made so with a little
+effort by someone who is intimately familiar with Excel.
 
-This module is designed to help you write interfaces that let users who are not
-programmers (but who might be familiar with spreadsheet functions) to be able to enter
-custom formulas, boolean expressions, and a little bit of text templating.
-It is designed with security in mind.
-This module is not Excel-compatible, but could be made so with a little effort by
-someone who is intimately familiar with Excel.
+The language is written with security in mind, and (until you start making changes)
+should be safe for most uses, since the functional design promotes O(1) complexity
+and shouldn't have side effects on the data structures you expose to the user.
+It does use C<eval> though, so you should do an audit for yourself if you plan to
+use it where security is a concern.
+
+=head2 Features:
+
+=over
+
+=item *
+
+Standard design with full scanner, parser, syntax tree, and compiler.
+
+=item *
+
+Generates perl coderefs for fast repeated execution
+
+=item *
+
+Provides metadata about what it compiled
+
+=item *
+
+Designed for extensibility
+
+=item *
+
+Light-weight, few dependencies, clean code
+
+=item *
+
+Top-down parse, which is easier to work with and gives helpful error messages,
+though could get a bit slow if you extend the grammar too much.
+(for simple grammars like this, it's pretty fast)
+
+=back
 
 =head1 ATTRIBUTES
 
@@ -104,8 +108,8 @@ Defaults to an instance of L<Language::FormulaEngine::Compiler>
 
 =cut
 
-has parser           => ( is => 'lazy', builder => sub {}, coerce => sub { _coerce_instance($_[0], 'Language::FormulaEngine::Parser')    } );
-has compiler         => ( is => 'lazy', builder => sub {}, coerce => sub { _coerce_instance($_[0], 'Language::FormulaEngine::Compiler')  } );
+has parser           => ( is => 'lazy', builder => sub {}, coerce => sub { _coerce_instance($_[0], 'parse', 'Language::FormulaEngine::Parser')    } );
+has compiler         => ( is => 'lazy', builder => sub {}, coerce => sub { _coerce_instance($_[0], 'compile', 'Language::FormulaEngine::Compiler')  } );
 
 =head1 METHODS
 
@@ -157,7 +161,10 @@ sub _coerce_instance {
 	my ($thing, $req_method, $default_class)= @_;
 	return $thing if ref $thing and ref($thing)->can($req_method);
 	
-	my $class= ref $thing? $default_class : $thing;
+	my $class= !(defined $thing || ref $thing)? $default_class : $thing;
+	use DDP;
+	my $x= [ $thing, $req_method, $default_class, $class ];
+	p $x;
 	require_module($class)
 		unless $class->can('new');
 	
