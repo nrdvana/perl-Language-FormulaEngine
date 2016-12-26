@@ -197,7 +197,7 @@ has token_value        => ( is => 'ro', init_arg => undef );
 
 Returns the 0-based line number and character number of the current token
 as a two-element list.
-(calculated from L</_buffer_row_col> and L</_buffer_ofs>)
+(calculated from L</_buffer_row_col> and L</_buffer_pos>)
 
 =cut
 
@@ -235,7 +235,8 @@ This is useful for single-line "die" messages.
 sub token_context {
 	my $self= shift;
 	my $buf= $self->_buffer;
-	my $ofs= $self->_token_ofs // $self->_buffer_ofs;
+	my $ofs= $self->_token_pos;
+	$ofs= $self->_buffer_pos unless defined $ofs;
 	# If we don't have a buffer, there's nothing to show, so print "end of input".
 	length($buf // '') > $ofs
 		or return '(end of input)';
@@ -264,21 +265,21 @@ This method also supports various options for formatting.
 sub token_context_tty {
 	my ($self, %args)= @_;
 	my $buf= $self->_buffer;
-	my ($token_ofs, $scanner_ofs)= ($self->_token_ofs, $self->_buffer_ofs);
+	my ($token_pos, $scanner_pos)= ($self->_token_pos, $self->_buffer_pos);
 	my ($prefix, $token, $suffix)= ('','','');
 	# If we don't have a buffer, there's nothing to show, so print "end of input".
 	if (!length($buf)) {
 		$suffix= '(end of input)';
 	}
 	# If no token, then can't underline it
-	elsif (!defined $token_ofs) {
-		$prefix= substr($buf, 0, $scanner_ofs);
-		$suffix= substr($buf, $scanner_ofs);
+	elsif (!defined $token_pos) {
+		$prefix= substr($buf, 0, $scanner_pos);
+		$suffix= substr($buf, $scanner_pos);
 	}
 	else {
-		$prefix= substr($buf, 0, $token_ofs);
-		$token=  substr($buf, $token_ofs, $scanner_ofs-$token_ofs);
-		$suffix= substr($buf, $scanner_ofs);
+		$prefix= substr($buf, 0, $token_pos);
+		$token=  substr($buf, $token_pos, $scanner_pos-$token_pos);
+		$suffix= substr($buf, $scanner_pos);
 	}
 	
 	# Truncate prefix and suffix at line endings
@@ -330,40 +331,57 @@ sub next_token {
 	my $self= shift;
 	
 	# If already reached end of input, throw an exception.
-	return 0
+	die "Can't call next_token after end of input"
 		if 'eof' eq ($self->{token_type}||'');
 	
 	# Detect the next token
-	find_token: while (1) { # loop while type is ''
+	my ($type, $val, $pos0, $pos1)= ('','');
+	find_token: while ($type eq '') {
 		# Clear the current token
 		undef @{$self}{'token_type','token_value','_token_pos'};
 		
-		# Check for end of buffer
-		my $pos= pos $self->{_buffer} || 0;
-		if ($pos >= length($self->{_buffer})) {
-			unless ($self->_grow_buffer) {
-				$self->{token_type}= 'eof';
-				$self->{token_value}= '';
-				return 0;
+		$pos0= pos $self->{_buffer} || 0;
+		($type, $val)= $self->_find_token;
+		$pos1= pos $self->{_buffer} || 0;
+		
+		$log->tracef('pos0=%d pos1=%d type=%s val=%s buflen=%d', $pos0, $pos1, $type, $val, length $self->{_buffer});
+		
+		# Check for end of buffer, even if it matched.
+		if ($pos1 >= length $self->{_buffer}) {
+			pos $self->{_buffer} = $pos0; # rewind to start of token before growing buffer
+			if ($self->_grow_buffer) {
+				$log->trace("grow buffer succeeded");
+				$type= '';
+				next find_token;
 			}
-			$pos= pos $self->{_buffer} || 0;
-		}
-		my ($type, $val);
-		for my $rule (@{ $self->rules }) {
-			if (($type, $val)= $rule->{match}->($self)) {
-				$log->tracef('Matched %s type=%s value=%s _buffer_pos=%d', $rule->{name}, $type, $val, pos $self->{_buffer})
-					if $log->is_trace;
-				pos $self->{_buffer} > $pos
-					or croak "Tokenizer consumed zero characters";
-				# Ignore tokens whose type is ''
-				next find_token if $type eq '';
-				
-				@{$self}{'token_type','token_value','_token_pos'}= ($type,$val,$pos);
-				return 1;
+			# Else, can't grow buffer, so we're stuck here.
+			# If we didn't get a token, or a token to ignore, then set the EOF token
+			pos $self->{_buffer} = $pos1;
+			if (!defined $type || $type eq '') {
+				$type= 'eof';
+				$val= '';
+				last find_token;
 			}
 		}
-		die "Unknown syntax at ".$self->token_context."\n";
+		
+		defined $type
+			or die "Unknown syntax at ".$self->token_context."\n";
+		$pos1 > $pos0
+			or croak "Tokenizer consumed zero characters";
 	}
+	@{$self}{'token_type','token_value','_token_pos'}= ($type,$val,$pos0);
+	return $type, $val;
+}
+
+sub _find_token {
+	my $self= shift;
+	for my $rule (@{ $self->rules }) {
+		my ($type, $val)= $rule->{match}->($self) or next;
+		$log->tracef('Matched %s type=%s value=%s _buffer_pos=%d', $rule->{name}, $type, $val, $self->_buffer_pos)
+			if $log->is_trace;
+		return $type, $val;
+	}
+	return;
 }
 
 =head2 C<consume_token>
