@@ -78,11 +78,12 @@ sub parse {
 	pos( $self->{input} )= 0;
 	try {
 		$self->next_token;
-		$self->parse_tree($self->parse_expr);
+		my $tree= $self->parse_expr;
 		# It is an error if there was un-processed input.
-		$self->token_type eq 'eof'
-			or die sprintf('Unexpected %s "%s" near "%s"',
+		$self->token_type eq '0'
+			or die sprintf('Unexpected %s "%s" near %s',
 				$self->token_type, $self->token_value, $self->token_context);
+		$self->parse_tree($tree);
 	} catch {
 		$self->error($_);
 	};
@@ -143,7 +144,7 @@ sub next_token {
 	
 	# If already reached end of input, throw an exception.
 	die "Can't call next_token after end of input"
-		if 'eof' eq ($self->{token_type}||'');
+		if '0' eq ($self->{token_type}||'');
 	
 	# Detect the next token
 	my ($type, $val, $pos0, $pos1)= ('','');
@@ -162,7 +163,7 @@ sub next_token {
 			#pos($self->{input})= $pos1; # restore actual position\
 			# If we didn't get a token or are ignoring this final token, then return the EOF token
 			if (!defined $type || $type eq '') {
-				$type= 'eof';
+				$type= 0;
 				$val= '';
 				$pos0= $pos1;
 				last;
@@ -210,7 +211,7 @@ L<Language::FormulaEngine::Parser::ContextUtil/format_context_multiline>.
 sub consume_token {
 	my $self= shift;
 	croak "Can't consume EOF"
-		if $self->{token_type} eq 'eof';
+		if $self->{token_type} eq '0';
 	my $val= $self->{token_value};
 	$self->next_token;
 	return $val;
@@ -218,9 +219,9 @@ sub consume_token {
 
 sub token_context {
 	my ($self, %args)= @_;
-	return format_context_multiline($self->{input}, $self->{token_pos}, pos($self->{input}), \%args)
+	return format_context_multiline($self->{input}, $self->{token_pos}||0, pos($self->{input})||0, \%args)
 		if delete $args{multiline};
-	return format_context_string($self->{input}, $self->{token_pos}, pos($self->{input}));
+	return format_context_string($self->{input}, $self->{token_pos}||0, pos($self->{input})||0);
 }
 
 =head1 GRAMMAR
@@ -354,9 +355,9 @@ sub parse_unit_expr {
 	if ($self->{token_type} eq '(') {
 		$self->next_token;
 		my $args= $self->parse_list;
-		die "Expected ')' near \"".$self->scanner->token_context."\"\n"
+		die "Expected ')' near ".$self->token_context."\n"
 			if $self->{token_type} ne ')';
-		die "Expected expression before ')' near \"".$self->scanner->token_context."\"\n"
+		die "Expected expression before ')' near ".$self->token_context."\n"
 			unless @$args;
 		$self->next_token;
 		return @$args > 1? $self->new_call('list', $args) : $args->[0];
@@ -375,9 +376,9 @@ sub parse_unit_expr {
 		if ($self->{token_type} eq '(') {
 			$self->next_token;
 			my $args= $self->parse_list;
-			die "Expected ')' near \"".$self->token_context."\"\n"
+			die "Expected ')' near ".$self->token_context."\n"
 				if $self->{token_type} ne ')';
-			$self->scanner->consume_token;
+			$self->consume_token;
 			return $self->new_call($id, $args);
 		}
 		else {
@@ -385,8 +386,11 @@ sub parse_unit_expr {
 		}
 	}
 	
-	die "Unexpected token ".$self->{token_type}." '".$self->{token_value}
-		."' near \"".$self->scanner->token_context."\"\n";
+	if ($self->{token_type} eq '0') {
+		die "Expected expression component near (end of input)";
+	}
+	
+	die "Unexpected token $self->{token_type} '$self->{token_value}' near ".$self->token_context."\n";
 }
 
 sub parse_list {
@@ -455,7 +459,7 @@ BEGIN {
 			}
 			
 			# Check for numbers
-			if ($self->{input} =~ /\G([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)/gc) {
+			if ($self->{input} =~ /\G([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)\b/gc) {
 				return Number => $1;
 			}
 			
@@ -465,7 +469,7 @@ BEGIN {
 			}
 			
 			# Check for identifiers
-			if ($self->{input} =~ /\G([A-Za-z_][A-Za-z0-9_.]*)/gc) {
+			if ($self->{input} =~ /\G([A-Za-z_][A-Za-z0-9_.]*)\b/gc) {
 				return Identifier => $1;
 			}
 			
@@ -485,8 +489,8 @@ BEGIN {
 
 sub _str_escape {
 	my $str= shift;
-	$str =~ s/"/""/g;
-	qq{"$str"};
+	$str =~ s/'/''/g;
+	"'$str'";
 }
 
 =head2 Parse Nodes
@@ -524,7 +528,7 @@ of C<Call( 'negative', $node )>.
 
 sub Language::FormulaEngine::Parser::Node::get_negative {
 	my $self= shift;
-	bless [ 'negative', [ $self ] ], 'Language::FormulaEngine::Node::Call';
+	bless [ 'negative', [ $self ] ], 'Language::FormulaEngine::Parser::Node::Call';
 }
 
 =head3 Call, new_call
@@ -582,7 +586,7 @@ sub Language::FormulaEngine::Parser::Node::Symbol::to_canonical { $_[0]->symbol 
 
 sub new_variable  {
 	my ($self, $symbol)= @_;
-	$self->variables->{$symbol}++; # record dependency on this variable
+	$self->symbols->{$symbol}++; # record dependency on this variable
 	bless \$symbol, 'Language::FormulaEngine::Parser::Node::Symbol'
 }
 
@@ -600,7 +604,7 @@ Call C<to_canonical> to see it escaped pascal-style.
 sub Language::FormulaEngine::Parser::Node::String::text { ${$_[0]} }
 
 sub Language::FormulaEngine::Parser::Node::String::to_canonical {
-	return Language::FormulaEngine::Parser::str_escape(${$_[0]});
+	return Language::FormulaEngine::Parser::_str_escape(${$_[0]});
 }
 
 sub new_string {
