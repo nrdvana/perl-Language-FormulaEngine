@@ -12,9 +12,9 @@ use_ok( 'Language::FormulaEngine::Scanner' ) or BAIL_OUT;
 # capture error message of code that should die
 sub error_of(&) { my $sub= shift; try { $sub->(); 'No Exception Thrown' } catch { $_ } }
 
-my %_escape_mapping= ("\0" => '\0', "\n" => '\n', "\r" => '\r', "\t" => '\t', "\f" => '\f', "\b" => '\b', "\a" => '\a', "\e" => '\e', "\\" => '\\' );
-sub escape_char { exists $_escape_mapping{$_[0]}? $_escape_mapping{$_[0]} : sprintf((ord $_[0] <= 0xFF)? "\\x%02X" : "\\x{%X}", ord $_[0]); }
-sub escape_str { my $str= shift; $str =~ s/([^\x20-\x7E])/escape_char($1)/eg; $str; }
+my %_str_escapes= ("\0" => '\0', "\n" => '\n', "\r" => '\r', "\t" => '\t', "\f" => '\f', "\b" => '\b', "\a" => '\a', "\e" => '\e', "\\" => '\\' );
+sub str_escape_char { exists $_str_escapes{$_[0]}? $_str_escapes{$_[0]} : sprintf((ord $_[0] <= 0xFF)? "\\x%02X" : "\\x{%X}", ord $_[0]); }
+sub str_escape { my $str= shift; $str =~ s/([^\x20-\x7E])/str_escape_char($1)/eg; $str; }
 
 sub test_scanner {
 	my @tests= (
@@ -80,7 +80,7 @@ sub test_scanner {
 
 	for (@tests) {
 		my ($str, @tokens)= @$_;
-		subtest '"'.escape_str($str).'"' => sub {
+		subtest '"'.str_escape($str).'"' => sub {
 			my $p= new_ok( 'Language::FormulaEngine::Scanner', [ input => $str ], 'new scanner' );
 			$p->next_token;
 			my $i= 1;

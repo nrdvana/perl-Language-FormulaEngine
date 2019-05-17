@@ -185,7 +185,7 @@ the wrong module.  See the notes in the L</"SEE ALSO"> section.
 =head2 Adding Functions
 
 You can easily add custom functions to the language by subclassing the compiler
-and ading methods with the appropriate name.  See the L<compiler documentation|Language::FormulaEngine::Compiler/DESCRIPTION>
+and adding methods with the appropriate name.  See the L<compiler documentation|Language::FormulaEngine::Compiler/DESCRIPTION>
 for details.
 
 =head2 Overriding Operators

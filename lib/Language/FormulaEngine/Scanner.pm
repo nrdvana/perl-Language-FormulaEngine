@@ -19,39 +19,27 @@ use namespace::clean;
     extends 'Language::FormulaEngine::Scanner';
     
     # To change the set of operators/keywords:
-    sub _build_keywords { ... }
+    sub keywords { ... }
     
-    # To make changes to regexes of existing rules:
-    sub _build_rule_... {
-      my $rule= shift->SUPER::_build_rule_...;
-      $rule->{pattern}= ...;
-      return $rule;
-    }
-    
-    # To add new token types:
+    # To make changes to the scanner patterns:
     sub _build_rules {
-      my $rules= shift->SUPER::_build_rules();
-      push @$rules, { name => ..., pattern => ..., handler => ... };
+      my $rules= shift->SUPER::_build_rules;
+      $rules->{Number}{match}= sub { ... };
+      $rules->{Comment}= {
+        priority => 99, match => sub { ... },
+      };
       return $rules;
     }
     
-    # For more complex parsing than can be done with regexes,
-    # build your own tokenizer:
-    sub _build__tokenizer {
-      return sub {
-        my ($scanner, $input)= @_;
-        ...;
-        return $chars_consumed, $type, $value;
-      };
-    }
+    # For context-sensitive scanner states, either swap the rules at
+    # runtime, or use a dynamic _find_token
     
-    # For context-sensitive scanner states, swap the tokenizer at runtime
-    my $other_tokenizer= __PACKAGE__->_build_tokenizer_for_rules(\@other_rules);
-    sub _build_rule_foo {
-       { name => "Foo", pattern => ..., handler => sub {
-           shift->_tokenizer($other_tokenizer);
-           return length(shift), '', '';
-       }}
+    # For more complex parsing than can be done with a list of regexes,
+    # build your own tokenizer:
+    sub _find_token {
+        my $self= shift;
+        ... # process on $self->{_buffer} starting from pos($self->{_buffer});
+        return $token_type, $token_value;
     }
   }
 
@@ -344,7 +332,7 @@ sub next_token {
 		($type, $val)= $self->_find_token;
 		$pos1= pos $self->{_buffer} || 0;
 		
-		$log->tracef('pos0=%d pos1=%d type=%s val=%s buflen=%d', $pos0, $pos1, $type, $val, length $self->{_buffer});
+		#$log->tracef('pos0=%d pos1=%d type=%s val=%s buflen=%d', $pos0, $pos1, $type, $val, length $self->{_buffer});
 		
 		# Check for end of buffer, even if it matched.
 		if ($pos1 >= length $self->{_buffer}) {
