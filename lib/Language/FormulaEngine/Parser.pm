@@ -90,6 +90,22 @@ sub parse {
 	return $self;
 }
 
+sub _str_escape {
+	my $str= shift;
+	$str =~ s/'/''/g;
+	"'$str'";
+}
+
+sub deparse {
+	my ($self, $node)= @_;
+	return $node unless ref $node;
+	return _str_escape($node->text) if $node->can('text');
+	return $node->symbol if $node->can('symbol');
+	return $node->function_name . '( ' .join(', ', map $self->deparse($_), @{$node->parameters}). ' )'
+		if $node->can('function_name');
+	croak "Don't know how to deparse node type ".ref($node);
+}
+
 =head1 EXTENSIBLE API
 
 These methods and attributes are documented for purposes of subclassing the parser.
@@ -326,7 +342,7 @@ sub parse_sum_expr {
 	while ($self->{token_type} eq '+' or $self->{token_type} eq '-') {
 		my $negate= $self->consume_token eq '-';
 		my $operand= $self->parse_prod_expr;
-		push @sum_expr, $negate? $operand->get_negative : $operand;
+		push @sum_expr, $negate? $self->get_negative($operand) : $operand;
 	}
 	return $self->new_call('sum', \@sum_expr);
 }
@@ -487,158 +503,119 @@ BEGIN {
 	*scan_token= $scan_token;
 }
 
-sub _str_escape {
-	my $str= shift;
-	$str =~ s/'/''/g;
-	"'$str'";
-}
-
 =head2 Parse Nodes
 
-There are classes for each of the types of nodes that the parser creates.
-These classes are not based on hashrefs or Moo, since they are intended to
-be extremely light-weight.  There is a method to construct each type of node,
-rather than using a constructor on the class.  If you subclass the parser you
-are encouraged to create your own node classes rather than sub-classing
-existing ones, and then you can simply override the C<new_*> methods to get
-the existing code to use your objects.  These node classes are also defined
-as part of the Parser package rather than a standalone C<Parser/Node.pm>.
+The parse tree takes a minimalist approach to node classification.  In this default
+implementation, numbers are represented as plain perl scalars, strings and symbolic references
+are represented as blessed scalar refs, and function calls are represented as blessed Lisp-style
+arrayrefs.
 
-The node API is:
+A blessed node only needs to support one method: C<< ->evaluate($namespace) >>.
+
+The class name of the blessed nodes should be ignored.  A function is anything which
+C<< can("function_name") >>, a string is anything which C<< can("string_value") >> and a
+symbolic reference is anything which C<< can("symbolic_name") >>.  Also, the blessed strings
+automatically stringify to their value, behaving almost like plain perl scalars.
+
+Subclasses of Parser should implemnt new node types as needed.  You probable also need to
+update L</deparse>.
+
+The parser rules create nodes by methods on the Parser class, for easy subclassing.
 
 =over
 
-=item to_canonical
+=item new_call
 
-Returns official formatting of node as source code
+  $node= $parser->new_call( $function_name, $parameters );
 
-=item get_negative
-
-Returns a new parse node that is the effective negation of the current parse node.
-This simplifies the parse tree in some cases.
-
-=back
-
-=head3 Node
-
-This is the base class for nodes, and its C<get_negative> returns a function
-of C<Call( 'negative', $node )>.
-
-=cut 
-
-sub Language::FormulaEngine::Parser::Node::get_negative {
-	my $self= shift;
-	bless [ 'negative', [ $self ] ], 'Language::FormulaEngine::Parser::Node::Call';
-}
-
-=head3 Call, new_call
-
-Represents a call to a named subroutine (function).
-This is the most common kind of node, as most constructs in this grammar are
-treated as named functions.  It has attributes of C<fn_name> and C<args>.
-
-  $node= $parser->new_call( $fn_name, \@arg_nodes );
-
-Calling C<get_negative> on a function named 'negative' will simply un-wrap the arguments.
+Generate a node for a function call.  The returned node has attributes C<function_name>
+and C<parameters>
 
 =cut
 
-@Language::FormulaEngine::Parser::Node::Call::ISA= 'Language::FormulaEngine::Parser::Node';
-
-sub Language::FormulaEngine::Parser::Node::Call::fn_name { $_[0][0] }
-
-sub Language::FormulaEngine::Parser::Node::Call::args    { $_[0][1] }
-
-sub Language::FormulaEngine::Parser::Node::Call::get_negative {
-	my $self= shift;
-	if ($self->fn_name eq 'negative') {
-		# the negative of a negative is the original
-		return $self->args->[0];
-	}
-	$self->SUPER::get_negative();
-}
-
-sub Language::FormulaEngine::Parser::Node::Call::to_canonical {
-	my $self= shift;
-	return $self->fn_name . '( ' .join(', ', map { $_->to_canonical } @{$self->args}). ' )';
+sub Language::FormulaEngine::Parser::Node::Call::function_name { $_[0][0] }
+sub Language::FormulaEngine::Parser::Node::Call::parameters { $_[0][1] }
+sub Language::FormulaEngine::Parser::Node::Call::evaluate {
+	my ($self, $namespace)= @_;
+	my $name= $self->function_name;
+	my $fn= $namespace->get_function($name) or die "Unknown function '$name'\n";
+	$fn->($namespace, $self);
 }
 
 sub new_call {
-	my ($self, $fn, $args)= @_;
+	my ($self, $fn, $params)= @_;
 	$self->functions->{$fn}++; # record dependency on this function
-	bless [ $fn, $args ], 'Language::FormulaEngine::Parser::Node::Call';
+	bless [ $fn, $params ], 'Language::FormulaEngine::Parser::Node::Call';
 }
 
-=head3 Symbol, new_symbol
+=item new_symbol
 
-A reference to a symbolic constant (i.e. variable).
-It has an attribute C<symbol>.
+  $node= $parser->new_symbol($symbol_name);
 
-  $node= $parser->new_symbol($symbol);
+A reference to a symbolic value (i.e. variable or constant).
+It has one attribute C<symbol_name>.
 
 =cut
 
-@Language::FormulaEngine::Parser::Node::Symbol::ISA= 'Language::FormulaEngine::Parser::Node';
-
-sub Language::FormulaEngine::Parser::Node::Symbol::symbol { ${$_[0]} }
-
-sub Language::FormulaEngine::Parser::Node::Symbol::to_canonical { $_[0]->symbol }
+sub Language::FormulaEngine::Parser::Node::Symbol::symbol_name { ${$_[0]} }
+sub Language::FormulaEngine::Parser::Node::Symbol::evaluate {
+	my ($self, $namespace)= @_;
+	$namespace->get_value($$self);
+}
 
 sub new_variable  {
-	my ($self, $symbol)= @_;
-	$self->symbols->{$symbol}++; # record dependency on this variable
-	bless \$symbol, 'Language::FormulaEngine::Parser::Node::Symbol'
+	my ($self, $name)= @_;
+	$self->symbols->{$name}++; # record dependency on this variable
+	bless \$name, 'Language::FormulaEngine::Parser::Node::Symbol';
 }
 
-=head3 String, new_string
+=head3 new_string
 
-  $node= $parser->new_string($text);
+  $node= $parser->new_string($string_value);
 
-A string literal.  It has an attribute C<text> holding the raw value.
-Call C<to_canonical> to see it escaped pascal-style.
+A string literal.  It has an attribute C<string_value> holding the raw value.
 
 =cut
 
-@Language::FormulaEngine::Parser::Node::String::ISA= 'Language::FormulaEngine::Parser::Node';
-
-sub Language::FormulaEngine::Parser::Node::String::text { ${$_[0]} }
-
-sub Language::FormulaEngine::Parser::Node::String::to_canonical {
-	return Language::FormulaEngine::Parser::_str_escape(${$_[0]});
-}
+sub Language::FormulaEngine::Parser::Node::String::string_value { ${$_[0]} }
+sub Language::FormulaEngine::Parser::Node::String::evaluate { ${$_[0]} }
 
 sub new_string {
 	my ($self, $text)= @_;
 	bless \$text, 'Language::FormulaEngine::Parser::Node::String'
 }
 
-=item Number, new_number
+=item new_number
 
-  $node= $parser->new_number($value);
+  $plain_scalar= $parser->new_number($value);
 
-A numeric literal, with attribute C<value> holding the numeric value.
-No translation is performed by the default implementation of C<new_number>;
-this is the method to override if you want to support octal or something.
+A numeric constant.  It has an attribute C<number_value> holding the raw value.
 
 =cut
 
-@Language::FormulaEngine::Parser::Node::Number::ISA= 'Language::FormulaEngine::Parser::Node';
-
-sub Language::FormulaEngine::Parser::Node::Number::value { ${$_[0]} }
-
-sub Language::FormulaEngine::Parser::Node::Number::get_negative { # for numbers, we return a new number with the sign flipped
-	my ($self)= @_;
-	my $ret= -$self->value;
-	return bless \$ret, ref($self);
-}
-
-sub Language::FormulaEngine::Parser::Node::Number::to_canonical {
-	${$_[0]}
-}
+sub Language::FormulaEngine::Parser::Node::Number::number_value { ${$_[0]} }
+sub Language::FormulaEngine::Parser::Node::Number::evaluate { ${$_[0]} }
 
 sub new_number {
-	my ($self, $value)= @_;
+	my $value= $_[1]+0;
 	bless \$value, 'Language::FormulaEngine::Parser::Node::Number'
+}
+
+=item get_negative
+
+Utility method to get the "opposite of" a parse node.  By default, this wraps it with the
+function C<'negative'>, unless it already was that function then it unwraps the parameter.
+It performs simple negation on numbers.
+
+=back
+
+=cut
+
+sub get_negative {
+	my ($self, $node)= @_;
+	return $self->new_number(-$node->number_value) if $node->can('number_value');
+	return $node->parameters->[0] if $node->can('function_name') and $node->function_name eq 'negative';
+	return $self->new_call('negative', [$node]);
 }
 
 1;

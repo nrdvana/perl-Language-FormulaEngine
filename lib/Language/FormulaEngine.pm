@@ -4,23 +4,25 @@ use Carp;
 use Try::Tiny;
 use Module::Runtime 'require_module';
 
-our $VERSION= '0.900';
-
-# ABSTRACT - Extensible parser/compiler for simple expression language like used for spreadsheets
+# ABSTRACT: Extensible parser/compiler for simple expression language like used for spreadsheets
+# VERSION
 
 =head1 SYNOPSIS
 
   my $vars= { foo => 1, bar => 3.14159265358979, baz => 42 };
   
   my $engine= Language::FormulaEngine->new();
+  $engine->evaluate( 'if(foo, round(bar, 3), baz*100)', $vars );
+  
+  # or for more speed
   my $formula= $engine->compile( 'if(foo, round(bar, 3), baz*100)' );
   print $formula->evaluate($vars);
   
   
   package MyContext {
     use Moo;
-    extends 'Language::FormulaEngine::Compiler';
-    sub fn_customfunc { shift; print "arguments are ".join(', ', @_)."\n"; }
+    extends 'Language::FormulaEngine::Namespace::V0';
+    sub fn_customfunc { print "arguments are ".join(', ', @_)."\n"; }
   };
   my $engine= Language::FormulaEngine->new(compiler => MyContext->new);
   my $formula= $engine->compile( 'CustomFunc(baz,2,3)' );
@@ -28,12 +30,13 @@ our $VERSION= '0.900';
 
 =head1 DESCRIPTION
 
-This class is a parser and code generator for a simple-ish expression language.
+This set of modules implement a parser, evaluator, and optional code generator for a
+simple expression language similar to those used in spreadsheets.
 
 The intent of this module is to help you write domain-specific languages for
 "power users" who are not programmers (or maybe just not trusted) to give them the
 ability to implement custom calculations or boolean logic in their system without
-pestering you constantly for code changes or endless additional checkbox-activated
+needing you to constantly make code changes or endless additional checkbox-activated
 features.
 
 The default language is pure-functional, in that each operation has exactly one return
@@ -48,8 +51,8 @@ effort by someone who is intimately familiar with Excel.
 The language is written with security in mind, and (until you start making changes)
 should be safe for most uses, since the functional design promotes O(1) complexity
 and shouldn't have side effects on the data structures you expose to the user.
-It does use C<eval> though, so you should do an audit for yourself if you plan to
-use it where security is a concern.
+The optional L</compile> method does use C<eval> though, so you should do an audit for
+yourself if you plan to use it where security is a concern.
 
 =head2 Features:
 
@@ -57,11 +60,11 @@ use it where security is a concern.
 
 =item *
 
-Standard design with full scanner, parser, syntax tree, and compiler.
+Standard design with full scanner, parser, syntax tree, namespaces, and compiler.
 
 =item *
 
-Generates perl coderefs for fast repeated execution
+Can generate perl coderefs for fast repeated execution
 
 =item *
 
@@ -88,10 +91,19 @@ though could get a bit slow if you extend the grammar too much.
 =head2 parser
 
 A parser for the language.  Responsible for tokenizing the input and building the
-parse tree.  You can initialize this attribute with a class instance, a class name,
+parse tree.  You can initialize this attribute with an object instance, a class name,
 or arguments for the default parser.
 
 Defaults to an instance of L<Language::FormulaEngine::Parser>.
+
+=head2 namespace
+
+A namespace for looking up functions or constants.  Also determines some aspects of how the
+language works, and responsible for providing the perl code when compiling expressions.
+You can initialize this with an object instance, class name, version number for one of the
+::Namespace::Vx modules, or hashref of arguments for the constructor.
+
+Defaults to an instance of L<Language::FormulaEngine::Namespace::V0>
 
 =head2 compiler
 
@@ -99,35 +111,39 @@ A compiler for the parse tree.  Responsible for generating Perl code.
 You can initialize this attribute with a class instance, a class name,
 or arguments for the default parser.
 
-The compiler object also holds the library of functions provided to the user.
-Note that compiled formula may hold references to the compiler object, so never
-store references to formula into the compiler object (or you end up with a memory
-leak).
-
 Defaults to an instance of L<Language::FormulaEngine::Compiler>
 
 =cut
 
-has parser           => ( is => 'lazy', builder => sub {}, coerce => sub { _coerce_instance($_[0], 'parse', 'Language::FormulaEngine::Parser')    } );
-has compiler         => ( is => 'lazy', builder => sub {}, coerce => sub { _coerce_instance($_[0], 'compile', 'Language::FormulaEngine::Compiler')  } );
+has parser    => ( is => 'lazy', coerce => sub { _coerce_instance($_[0], 'parse', 'Language::FormulaEngine::Parser')    } );
+has namespace => ( is => 'lazy', coerce => sub { _coerce_instance($_[0], 'namespace', 'Language::FormulaEngine::Namespace::V0') } );
+has compiler  => ( is => 'lazy', coerce => sub { _coerce_instance($_[0], 'compile', 'Language::FormulaEngine::Compiler')  } );
 
 =head1 METHODS
+
+=head2 evaluate
+
+  my $value= $fe->evaluate( $formula_text, \%variables );
+
+This method creates a new namespace from the default plus the supplied variables, parses the
+formula, then evaluates it in a recursive interpreted manner.  Exceptions from parsing or
+execution are not caught.
 
 =head2 compile
 
   my $formula= $fe->compile( $formula_text );
-  # or to trap exceptions...
-  my $formula= $fe->compile( $formula_text, $error_result );
 
-Returns a L<Language::FormulaEngine::Formula> object for this
-text.  May throw a variety of exceptions if the formula contains syntax errors
-or references to missing functions.
+Parses and then compiles the C<$formula_text>, returning a L<Language::FormulaEngine::Formula>
+object.  The returned object may reference a parse_error or compile_error, and also contains
+useful information about the result.  Always returns a result and does not throw exceptions.
 
-If you specify the optional second argument and the formula has an error, the
-variable passed as $error_result will receive the error and the function returns
-undef instead of dying.
+=head2 compile_coderef
+
+Parses then compiles the C<$formula_text>.  Returns a coderef or dies trying.  The coderef
+takes one optional argument of a hashref of variables.
 
 =cut
+
 sub compile {
 	# If they want to capture the error, wrap with try/catch
 	if (@_ == 3) {
