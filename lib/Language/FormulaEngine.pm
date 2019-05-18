@@ -115,9 +115,25 @@ Defaults to an instance of L<Language::FormulaEngine::Compiler>
 
 =cut
 
-has parser    => ( is => 'lazy', coerce => sub { _coerce_instance($_[0], 'parse', 'Language::FormulaEngine::Parser')    } );
-has namespace => ( is => 'lazy', coerce => sub { _coerce_instance($_[0], 'namespace', 'Language::FormulaEngine::Namespace::V0') } );
-has compiler  => ( is => 'lazy', coerce => sub { _coerce_instance($_[0], 'compile', 'Language::FormulaEngine::Compiler')  } );
+has parser    => ( is => 'lazy', builder => sub {}, coerce => sub { _coerce_instance($_[0], 'parse', 'Language::FormulaEngine::Parser')    } );
+has namespace => ( is => 'lazy', builder => sub {}, coerce => sub { _coerce_instance($_[0], 'get_function', 'Language::FormulaEngine::Namespace::V0') } );
+has compiler  => ( is => 'lazy', builder => sub {}, coerce => sub { _coerce_instance($_[0], 'compile', 'Language::FormulaEngine::Compiler')  } );
+
+sub _coerce_instance {
+	my ($thing, $req_method, $default_class)= @_;
+	return $thing if ref $thing and ref($thing)->can($req_method);
+	
+	my $class= !(defined $thing || ref $thing)? $default_class
+		: ($req_method eq 'get_function' && $thing =~ /^\d+$/)? "Language::FormulaEngine::Namespace::V$thing"
+		: $thing;
+	require_module($class)
+		unless $class->can('new');
+	
+	my @args= !ref $thing? ()
+		: (ref $thing eq 'ARRAY')? @$thing
+		: $thing;
+	return $class->new(@args);
+}
 
 =head1 METHODS
 
@@ -126,215 +142,78 @@ has compiler  => ( is => 'lazy', coerce => sub { _coerce_instance($_[0], 'compil
   my $value= $fe->evaluate( $formula_text, \%variables );
 
 This method creates a new namespace from the default plus the supplied variables, parses the
-formula, then evaluates it in a recursive interpreted manner.  Exceptions from parsing or
-execution are not caught.
+formula, then evaluates it in a recursive interpreted manner, returning the result. Exceptions
+may be thrown during parsing or execution.
+
+=cut
+
+sub evaluate {
+	my ($self, $text, $vars)= @_;
+	$self->parser->parse($text)
+		or die $self->parser->error;
+	my $ns= $self->namespace;
+	$ns= $ns->clone_and_merge(variables => $vars) if $vars && %$vars;
+	return $self->parser->parse_tree->evaluate($ns);
+}
 
 =head2 compile
 
-  my $formula= $fe->compile( $formula_text );
+  my $coderef= $fe->compile( $formula_text );
 
-Parses and then compiles the C<$formula_text>, returning a L<Language::FormulaEngine::Formula>
-object.  The returned object may reference a parse_error or compile_error, and also contains
-useful information about the result.  Always returns a result and does not throw exceptions.
-
-=head2 compile_coderef
-
-Parses then compiles the C<$formula_text>.  Returns a coderef or dies trying.  The coderef
-takes one optional argument of a hashref of variables.
+Parses and then compiles the C<$formula_text>, returning a coderef.  Exceptions may be thrown
+during parsing or execution.
 
 =cut
 
 sub compile {
-	# If they want to capture the error, wrap with try/catch
-	if (@_ == 3) {
-		my ($err, $formula);
-		try {
-			$formula= $_[0]->compile($_[1]);
-		} catch {
-			$err= $_;
-			chomp($err) unless ref $err;
-		};
-		$_[2]= $err unless defined $formula;
-		return $formula;
-	}
-	
-	# else let exceptions fly.
 	my ($self, $text)= @_;
-	my $parse_result= $self->parser->parse($text);
-	my $perl_code= $self->compiler->compile($parse_result->{parse_tree});
-	my $coderef= $self->compiler->_clean_eval($perl_code)
-		or croak "Generated invalid code:\n\t$perl_code\n\t$@";
-	return Language::FormulaEngine::Formula->new(
-		orig_text    => $text,
-		var_deps     => $parse_result->{var_deps},
-		parse_tree   => $parse_result->{parse_tree},
-		perl_code    => $perl_code,
-		coderef      => $coderef,
-	);
-}
-
-sub _coerce_instance {
-	my ($thing, $req_method, $default_class)= @_;
-	return $thing if ref $thing and ref($thing)->can($req_method);
-	
-	my $class= !(defined $thing || ref $thing)? $default_class : $thing;
-	use DDP;
-	my $x= [ $thing, $req_method, $default_class, $class ];
-	p $x;
-	require_module($class)
-		unless $class->can('new');
-	
-	my @args= !ref $thing? () : (ref($thing) eq 'ARRAY')? @$thing : ();
-	return $class->new(@args);
+	$self->parser->parse($text)
+		or die $self->parser->error;
+	$self->compiler->namespace($self->namespace);
+	$self->compiler->compile($self->parser->parse_tree)
+		or die $self->compiler->error;
 }
 
 =head1 CUSTOMIZING THE LANGUAGE
 
-The module is called "FormulaEngine" in part because it is designed to be
-customized. The functions are easy to extend, the variables are somewhat easy
-to extend, the compilation can be extended after a little study of the API,
-and the grammar itself can be extended with some effort.
+The module is called "FormulaEngine" in part because it is designed to be customized.
+The functions are easy to extend, the variables are somewhat easy to extend, the compilation
+can be extended after a little study of the API, and the grammar itself can be extended with
+some effort.
 
-If you are trying to addd LOTS of functionality, you might be starting with
-the wrong module.  See the notes in the L</"SEE ALSO"> section.
+If you are trying to addd I<lots> of functionality, you might be starting with the wrong module.
+See the notes in the L</"SEE ALSO"> section.
 
 =head2 Adding Functions
 
-You can easily add custom functions to the language by subclassing the compiler
-and adding methods with the appropriate name.  See the L<compiler documentation|Language::FormulaEngine::Compiler/DESCRIPTION>
-for details.
+The easiest thing to extend is the namespace of available functions.  Just subclass
+L<Language::FormulaEngine::Namespace> and add the functions you want starting with the prefix
+C<fn_>.
 
-=head2 Overriding Operators
+=head2 Complex Variables
 
-You can also override the behavior of the basic operators by defining methods
-on your compiler with names like 'C<fn_sum>', 'C<fn_mul>', 'C<fn_div>',
-'C<fn_compare>' and so on.  In other words, each operator is an alias for a
-named function.  If you define one of these methods, it will by called
-instead of using the built-in default.  L<The parser|Language::FormulaEngine::Parser>
-documents the functions for each operator.
+The default implementation of Namespace requires all variables to be stored in a single hashref.
+This default is safe and fast.  If you want to traverse nested data structures or call methods,
+you also need to subclass the Namespace C<get_value> method.
 
-=head2 Complex Data Structures
+=head2 Changing Semantics
 
-All variables are simple names looked up in a single hash, though the names can
-contain "." to give the illusion of data structures.  I chose this default because
-it is safe and fast.
+The namespace is also in control of the behavior of the functions and operators (which are
+themselves just functions).  It controls both the way they are evaluated and the perl code they
+generate if compiled.
 
-If you really do want to allow the user to walk data structures, call methods,
-allow "vmethods" like in L<template toolkit|Template>, or so on, you can simply
-tie the hash that you pass as an argument to evaluate().  The other way is to
-subclass the method in the compiler that inlines the "VarRefNode" objects.
+=head2 Adding New Operators
 
-=head2 Altering Syntax or Grammar
+If you want to make small changes to the grammar, such as adding new prefix/suffix/infix
+operators, this can be accomplished fairly easily by subclassing the Parser.  The parser just
+returns trees of functions, and if you look at the pattern used in the recursive descent
+C<parse_*> methods it should be easy to add some new ones.
 
-You can change how the text is tokenized by subclassing the L<parser|Language::FormulaEngine::Parser>.
-(It is composed of separate Scanner and Parser steps, but as a single class since
-if you want to subclass one you probably want to subclass both)
+=head2 Bigger Grammar Changes
 
-=cut
-
-package Language::FormulaEngine::Formula;
-
-=head1 FORMULA OBJECT
-
-Formula has the following attributes/methods
-
-=head2 orig_text
-
-Read-only. The original text of the formula before parsing.
-
-=head2 parse_tree
-
-Read-only. The tree of ParseNode objects describing the syntax of the formula.
-
-=head2 var_deps
-
-Read-only. The set of variables this formula depends on.
-
-=head2 perl_code
-
-Read-only. The string of perl source code generated from this formula.
-
-=head2 coderef
-
-Read-only. An executable perl subroutine compiled from ->perl_code.
-
-=cut
-
-use Moo;
-use Carp;
-use Try::Tiny;
-use overload '""' => \&to_string, 'bool' => \&to_bool;
-
-has orig_text  => ( is => 'ro' );
-has parse_tree => ( is => 'ro' );
-has var_deps   => ( is => 'ro' );
-has perl_code  => ( is => 'ro' );
-has coderef    => ( is => 'ro' );
-
-=head2 dependencies
-
-Read-only.  For the PartTemplate API.  Same as var_deps, but returns an
-arrayref instead of a set-hash.
-
-=head2 dependency_list
-
-List accessor for dependencies
-
-=head2 have_dependencies
-
-  if ($formula->have_dependencies(\%variables)) {
-    ...
-
-Convenience method to check whether all dependencies are present
-
-=head2 evaluate( \%vars )
-
-Evaluate the formula on the given set of variables.
-
-=cut
-
-sub get_dependencies {
-	my ($self, $dep_set)= @_;
-	if ($_[0]->var_deps) {
-		$dep_set->{$_}= 1 for keys %{$_[0]->var_deps}
-	}
-}
-
-sub dependency_list {
-	return $_[0]->var_deps? keys %{$_[0]->var_deps} : ()
-}
-
-sub have_dependencies { # HOT method
-	my ($self, $vars)= @_;
-	my $deps= $self->var_deps;
-	return 1 unless $deps;
-	defined $vars->{$_} or return 0
-		for keys %$deps;
-	return 1;
-}
-
-sub evaluate { # HOT method
-	my ($self, $vars)= @_;
-	return $self->coderef->($vars);
-}
-
-=head2 to_string
-
-This object stringifies into the original formula text.
-
-=head2 to_bool
-
-Formula objects are always true.  (needed because to_string can return '0'
-for the formula of the constant zero.)
-
-=cut
-
-sub to_string {
-	$_[0]->orig_text;
-}
-sub to_bool {
-	1
-}
+Any customization involving bigger changes to the grammar, like adding list comprehension or
+closures or map/reduce type things, would require a bigger rewrite.  Consider starting with
+a different more powerful parsing system for that.
 
 =head1 SEE ALSO
 

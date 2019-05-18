@@ -28,7 +28,7 @@ sub test_parser {
 			"compare( 5, '>', 6, '>', 7 )"
 		],
 		[ 'foo > bar+1-5-foo =baz*1e-2',
-			"compare( foo, '>', sum( bar, 1, -5, negative( foo ) ), '==', mul( baz, 1e-2 ) )"
+			"compare( foo, '>', sum( bar, 1, -5, negative( foo ) ), '==', mul( baz, 0.01 ) )"
 		],
 		[ 'foo((((34))))',
 			"foo( 34 )"
@@ -53,17 +53,18 @@ sub test_parser {
 	for (@tests) {
 		my ($str, $canonical, $err_regex)= @$_;
 		subtest '"'.escape_str($str).'"' => sub {
-			my $parse= Language::FormulaEngine::Parser->parse($str);
+			my $parser= Language::FormulaEngine::Parser->new;
+			$parser->parse($str);
 			
 			if (defined $canonical) {
-				is( $parse->error, undef, 'no error' );
-				is( $parse->parse_tree && $parse->parse_tree->to_canonical, $canonical, 'correct interpretation' )
-					or diag explain $parse;
+				is( $parser->error, undef, 'no error' );
+				is( $parser->parse_tree && $parser->deparse, $canonical, 'correct interpretation' )
+					or diag explain $parser;
 			}
 			else {
-				is( $parse->parse_tree, undef, 'parse failed' );
-				like( $parse->error, $err_regex, 'correct error message' )
-					or diag explain $parse;
+				is( $parser->parse_tree, undef, 'parse failed' );
+				like( $parser->error, $err_regex, 'correct error message' )
+					or diag explain $parser;
 			}
 			done_testing;
 		};

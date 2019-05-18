@@ -34,8 +34,8 @@ sub test_scanner {
 			[ '+'    => '+',      0, 8 ],
 			[ Number => 34,       0, 9 ],
 		],
-		[ "12A_1e-5,foOO(bar,34,baz)",
-			[ Number     => '12',     0, 0 ],
+		[ "1 A_1e-5,foOO(bar,34,baz)",
+			[ Number     => '1',      0, 0 ],
 			[ Identifier => 'A_1e',   0, 2 ],
 			[ '-'        => '-',      0, 6 ],
 			[ Number     => 5,        0, 7 ],
@@ -92,7 +92,7 @@ sub test_scanner {
 				is( $p->consume_token, $_->[1] );
 				$i++;
 			}
-			is( $p->token_type, 'eof' );
+			is( $p->token_type, '0' );
 			like( error_of {; $p->consume_token; }, qr/EOF/, 'consume at eof dies' );
 			done_testing;
 		};

@@ -8,13 +8,12 @@ use Language::FormulaEngine::Parser::ContextUtil
 	qw( calc_text_coordinates format_context_string format_context_multiline );
 use namespace::clean;
 
-our $VERSION= '0.00_1';
-
-# ABSTRACT - Create parse tree from an input string
+# ABSTRACT: Create parse tree from an input string
+# VERSION
 
 =head1 SYNOPSIS
 
-  my $parse_tree= Language::FormulaEngine::Parser->parse($string)->parse_tree;
+  my $parse_tree= Language::FormulaEngine::Parser->new->parse($string);
 
 =head1 DESCRIPTION
 
@@ -35,9 +34,10 @@ not include token/context information; this could also be added by a subclass.
 
 =head2 parse
 
-This is both a constructor and main method of the class.  It returns a new Parser object which
-holds the final state of the parse, which may have succeeded or failed.  Inspect the various
-attributes to find out what happened.
+Parse a new input text, updating all derived attributes with the result of the operation.
+It returns the value of L</parse_tree> (which is undef if the parse failed).
+On failure, the exception is stored in L</error> and other attributes like L</token_pos> may
+contain useful diagnostic information.
 
 =head2 parse_tree
 
@@ -54,8 +54,7 @@ A set (hashref) of all function names encountered during the parse.
 
 =head2 symbols
 
-A set (hashref) of all non-function symbols encountered.  (i.e. variables, but I'm not calling
-them that because this language is intended for read-only behavior)
+A set (hashref) of all non-function symbols encountered.  (variables, constnts, etc.)
 
 =cut
 
@@ -65,16 +64,9 @@ has functions    => ( is => 'rw' );
 has symbols      => ( is => 'rw' );
 
 sub parse {
-	my ($proto, $input)= @_;
-	my $class= ref $proto || $proto;
-	my $self= $class->new(
-		(ref $proto? %$proto : ()),
-		functions  => {},
-		symbols    => {},
-		parse_tree => undef,
-		error      => undef,
-		input      => $input,
-	);
+	my ($self, $input)= @_;
+	$self->reset;
+	$self->{input}= $input;
 	pos( $self->{input} )= 0;
 	try {
 		$self->next_token;
@@ -85,9 +77,20 @@ sub parse {
 				$self->token_type, $self->token_value, $self->token_context);
 		$self->parse_tree($tree);
 	} catch {
+		chomp;
 		$self->error($_);
 	};
-	return $self;
+	return $self->parse_tree;
+}
+
+sub reset {
+	my $self= shift;
+	$self->parse_tree(undef);
+	$self->error(undef);
+	$self->functions({});
+	$self->symbols({});
+	delete @{$self}{'input','token_type','token_value','token_pos'};
+	$self;
 }
 
 sub _str_escape {
@@ -96,11 +99,20 @@ sub _str_escape {
 	"'$str'";
 }
 
+=head2 deparse
+
+  my $formula_text= $parser->deparse($tree);
+
+Return a canonical formula text for the parse tree, or a parse tree that you supply.
+
+=cut
+
 sub deparse {
 	my ($self, $node)= @_;
-	return $node unless ref $node;
-	return _str_escape($node->text) if $node->can('text');
-	return $node->symbol if $node->can('symbol');
+	$node ||= $self->parse_tree;
+	return _str_escape($node->string_value) if $node->can('string_value');
+	return $node->number_value if $node->can('number_value');
+	return $node->symbol_name if $node->can('symbol_name');
 	return $node->function_name . '( ' .join(', ', map $self->deparse($_), @{$node->parameters}). ' )'
 		if $node->can('function_name');
 	croak "Don't know how to deparse node type ".ref($node);
@@ -137,7 +149,7 @@ Code within the parser should access this as C<< $self->{token_pos} >> for effic
 
 =cut
 
-has input           => ( is => 'rw', required => 1 );
+sub input              { shift->{input} }
 sub input_pos          { pos( shift->{input} ) }
 sub token_type         { shift->{token_type} }
 sub token_value        { shift->{token_value} }
