@@ -115,9 +115,27 @@ Defaults to an instance of L<Language::FormulaEngine::Compiler>
 
 =cut
 
-has parser    => ( is => 'lazy', builder => sub {}, coerce => sub { _coerce_instance($_[0], 'parse', 'Language::FormulaEngine::Parser')    } );
-has namespace => ( is => 'lazy', builder => sub {}, coerce => sub { _coerce_instance($_[0], 'get_function', 'Language::FormulaEngine::Namespace::V0') } );
-has compiler  => ( is => 'lazy', builder => sub {}, coerce => sub { _coerce_instance($_[0], 'compile', 'Language::FormulaEngine::Compiler')  } );
+has parser => (
+	is => 'lazy',
+	builder => sub {},
+	coerce => sub { _coerce_instance($_[0], 'parse', 'Language::FormulaEngine::Parser') }
+);
+has namespace => (
+	is => 'lazy',
+	builder => sub {},
+	coerce => sub { _coerce_instance($_[0], 'get_function', 'Language::FormulaEngine::Namespace::V0') },
+	trigger => sub { my ($self, $val)= @_; $self->compiler->namespace($val) },
+);
+has compiler => (
+	is => 'lazy',
+	builder => sub {},
+	coerce => sub { _coerce_instance($_[0], 'compile', 'Language::FormulaEngine::Compiler') }
+);
+
+sub BUILD {
+	my $self= shift;
+	$self->compiler->namespace($self->namespace);
+}
 
 sub _coerce_instance {
 	my ($thing, $req_method, $default_class)= @_;

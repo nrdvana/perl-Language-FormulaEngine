@@ -1,471 +1,226 @@
 package Language::FormulaEngine::Compiler;
 
-package
-	# This is at the top of the file to make sure the eval namespace is as clean as possible
-	# Need a second package to avoid getting clobbered by namespace::clean
-	Language::FormulaEngine::Compiler::_CleanEval {
-	sub _clean_eval {
-		my $compiler= shift;
-		eval shift;
-	}
-};
+# This is at the top of the file to make sure the eval namespace is as clean as possible
+# Need a second package to avoid getting clobbered by namespace::clean
+sub Language::FormulaEngine::Compiler::_CleanEval::_clean_eval {
+	use strict; # these apply to the contents of the eval, too.
+	use warnings;
+	# Arguments are ($compiler, $perl_code)
+	my $default_namespace= shift->namespace;
+	eval shift;
+}
 
 use Moo;
 use Carp;
 use Try::Tiny;
-use Scalar::Util 'looks_like_number';
-use POSIX 'ceil', 'floor';
+use Sub::Util 'subname', 'set_subname';
 use namespace::clean;
+
+# ABSTRACT: Compile a parse tree into perl code
+# VERSION
 
 *_clean_eval= *Language::FormulaEngine::Compiler::_CleanEval::_clean_eval;
 
-our $VERSION= '0.00_1';
-
-# ABSTRACT - Compile a parse tree into perl code
-
 =head1 DESCRIPTION
-
-The compiler generates perl code from the parse tree, converting each node
-into a string of perl code and inlining anything it knows how to inline.
-
-The compiler can be easily extended, by adding methods matching these patterns:
-
-=over
-
-=item inline_node_${NodeClass}
-
-Any time the compiler is asked to compile a node of type C<NodeClass> it calls
-this method, which should return a string of perl source code.
-
-=item inline_fn_${lowercase_function_name}
-
-The default compiler for FuncCallNode nodes will check for a method of this
-name, and if found, pass it the node.  The function returns a string of perl code.
-Function names seen in the user's code are lowercased.  (you could change that
-by overriding the L</compile_FuncCallNode> method)
-
-=item fn_${lowercase_function_name}
-
-If a user-function does not have an C<inline_fn_>, it falls back to calling
-this method name on the compiler instance at runtime.  In other words, the
-inlined code is
-
-  '$compiler->fn_foo(...)'
-
-where the arguments are computed values, not parser nodes.  C<$compiler> is a
-lexical variable in the scope of the anonymous sub being generated.
-
-=back
 
 =head1 ATTRIBUTES
 
-=head2 api
+=head2 namespace
 
-  $compiler->api({
-    (map { $_ => $_ } qw( and or not compare negative round ) ),
-    lc => 'lower',
-    uc => 'upper',
-  });
+Namespace to use for looking up functions, converting functions to perl code, and symbolic
+constants.  The namespace will also be bound into the coderefs which get compiled, so any
+change to the variables (not constants) of the namespace will be visible to compiled formulas.
 
-A hashref of which functions should be available during compilation.  By default,
-every "fn_*" and "inline_fn_*" will be available, but if you wish to preserve a
-stable API for your users, or just mask out certain functions, or rename them,
-this gives you a quick way to do that.  (much easier than creating packages with
-all *but* specific functions)
+=head2 variables_via_namespace
 
-You may also specify a number to request the API from a specific version of this
-module.  For example
-
-  $compiler->api(1)
-
-gives you exactly the functions that were available in Language::FormulaEngine
-version 1.0
+When compiling formulas, one option is to look up all runtime variables (passed to the coderef)
+through the C</namespace> object, allowing it to do custom processing to resolve the variables.
+The other option (the default of C<false>) is to put all the coderef parameters into a hashref
+and directly access that hashref, which is faster and avoids needing to create temporary
+namespaces.
 
 =cut
 
-has api => ( is => 'rw', coerce => \&_coerce_api );
+has namespace => ( is => 'rw', trigger => 1 );
+has variables_via_namespace => ( is => 'rw' );
 
-# History of APIs
-sub _api_for_version {
-	my $version= shift;
-	# Can't support future versions
-	croak "Invalid API version '$version'"
-		unless $version <= $VERSION;
-	# As new versions change things, return @foo if version > x
-	return { map { $_ => $_ } qw( and or not sum mul div if negative ) };
-}
+has error => ( is => 'rw' );
+has code_body => ( is => 'rw' );
 
-sub _coerce_api {
-	my ($arg)= @_;
-	return $arg if ref $arg eq 'HASH';
-	return { map { $_ => $_ } @$arg } if ref $arg eq 'ARRAY';
-	# Version number?
-	return _api_for_version($arg) if Scalar::Util::looks_like_number($arg);
-	# Else no clue....
-	croak "Can't coerce '$arg' into an API specification";
+has _perl_generator_cache => ( is => 'lazy', clearer => 1, default => sub { {} } );
+
+sub _trigger_namespace {
+	my ($self, $newval)= @_;
+	$self->_clear_perl_generator_cache if $newval ne ($self->{_prev_namespace}||'');
+	$self->{_prev_namespace}= $newval;
 }
 
 =head1 METHODS
 
-=head2 compile( $parse_tree )
+=head2 compile( $parse_tree, $subname )
 
-Compile a parse tree.  
-Note that the code may refer to a "C<$compiler>" variable which must be in scope
-when the code is eval'd.  Because of this reference, make sure to never store a
-reference to the compiled code within the compiler itself, or you get a circular
-reference.
+Compile a parse tree, returning a coderef.  Any references to functions will be immeditely
+looked up within the L</namespace>.  Any references to constants in the L</namespace> will be
+inlined into the generated perl.  Any other symbol is assumed to be a variable, and will be
+looked up from the L</namespace> at the time the formula is invoked.  The generated coderef
+takes parameters of overrides for the set of variables in the namespace:
+
+  $value= $compiled_sub->(%vars); # vars are optional
+
+Because the generated coderef contains a reference to the namespace, be sure never to store
+one of the coderefs into that namespace object, else you get a memory leak.
+
+The second argument C<$subname> is optional, but provided to help encourage use of
+L<Sub::Util/set_subname> for generated code.
 
 =cut
 
 sub compile {
-	my ($self, $parse_tree)= @_;
-	my $perl= $self->inline_node($parse_tree);
-	$perl= "sub { use warnings FATAL => qw( uninitialized numeric ); my \$vars= shift; $perl }";
-	$self->_clean_eval($perl);
+	my ($self, $parse_tree, $subname)= @_;
+	$self->error(undef);
+	$self->code_body(undef);
+	my $ret;
+	try {
+		$self->code_body($self->perlgen($parse_tree));
+		$ret= $self->generate_coderef_wrapper($self->code_body);
+	}
+	catch {
+		chomp;
+		$self->error($_);
+	};
+	return $ret;
 }
 
-=head2 inline_node( $parse_node )
+=head2 generate_coderef_wrapper
 
-Generate perl source code for a parse node (and by extension, everything within the tree) by
-dispatching to the appropriate C<inline_node_NodeClass> method.
+  my $coderef= $compiler->generate_coderef_wrapper($perl_code, $subname);
 
-The code returned by the default implementation requires variables C<$vars>
-and C<$compiler> to be in scope, in order to be evaluated.
+Utility method used by L</compile> that wraps a bit of perl code with the relevant boilerplate
+such as merging the coderef parameters into a temporary namespace, and then evals the perl
+to create the coderef.
 
 =cut
 
-has _formatter_cache => ( is => 'rw', default => sub { {} } );
-
-sub inline_node {
-	my ($self, $node)= @_;
-	($self->_formatter_cache->{ref $node} ||= do {
-		my $cls= ref $node;
-		$cls =~ s/Language::FormulaEngine:://;
-		$self->can("inline_node_".$cls)
-			or croak "Don't know how to compile node of type '".ref($node)."'";
-	})->($self, $node);
+sub generate_coderef_wrapper {
+	my ($self, $perl, $subname)= @_;
+	$self->error(undef);
+	my $wrapper= '# line '.__LINE__.'
+sub {
+  use warnings FATAL => qw( uninitialized numeric );'
+.($self->variables_via_namespace? '
+  my $namespace= @_? $default_namespace->clone_and_merge(@_) : $default_namespace;
+  my $vars= $namespace->variables;'
+  : '
+  my $namespace= $default_namespace;
+  my $vars= @_ == 1 && ref $_[0] eq "HASH"? $_[0] : { @_ };'
+).'
+# line 0 "compiled formula"
+'.$perl.'
+}';
+	my $ret;
+	{
+		local $@= undef;
+		if (defined ($ret= $self->_clean_eval($wrapper))) {
+			set_subname $subname, $ret if defined $subname;
+		} else {
+			$self->error($@);
+		}
+	}
+	return $ret;
 }
 
-=head2 inline_node_FuncCallNode
+=head2 perlgen( $parse_node )
 
-Generate perl code to represent a function call in the parse tree.
-
-Note that FormulaEngine represents almost every structure in the grammar
-as a "function call".  Operations like "C<+>" are converted to "C<sum()>"
-and so on.  See the L<parser|Language::FormulaEngine::Parser> for details.
-
-If the function call has an "C<inline_fn_$x>" available, that code is returned,
-else it returns perl code that calls "C<fn_$x>" at runtime.
+Generate perl source code for a parse node.
 
 =cut
 
-sub inline_node_FuncCallNode {
+sub perlgen {
 	my ($self, $node)= @_;
-	# Find the function call in the set of functions provided for the user
-	my $name= lc $node->function_name;
-	# Security check.
-	# TODO: I'd like to support international text, but don't know if there are
-	#       any pitfalls with allowing those to be inlined in perl code.
-	$name =~ /^[A-Za-z0-9_]+$/
-		or die "Illegal function name '".$node->function_name."'\n";
-	
-	# If configured with a specific API, then see if it exists.
-	if (my $api= $self->api) {
-		$name= $api->{$name};
+	if ($node->can('function_name')) {
+		my $name= $node->function_name;
+		my $gen= $self->_perl_generator_cache->{$name} ||= $self->_get_perl_generator($name);
+		return $gen->($self->namespace, $self, $node);
 	}
-	
-	if (my $inline= $self->can("inline_fn_$name")) {
-		return $inline->($self, $node);
+	elsif ($node->can('symbol_name')) {
+		my $name= $node->symbol_name;
+		my $x= $self->namespace->get_constant($name);
+		return defined $x? $self->perlgen_literal($x) : $self->perlgen_var_access($name);
 	}
-	elsif ($self->can("fn_$name")) {
-		# Now, convert each of the parameters
-		my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-		# Then concatenate it all
-		return '$compiler->fn_'.$name.'( '.join(', ', @arg_code).' )';
+	elsif ($node->can('string_value')) {
+		return $self->perlgen_string_literal($node->string_value);
+	}
+	elsif ($node->can('number_value')) {
+		return $node->number_value+0;
 	}
 	else {
-		# If no special case, the function isn't available
-		die "No such function '".$node->function_name."'\n";
+		die "Don't know how to compile node of type '".ref($node)."'\n";
 	}
 }
 
-=head2 inline_node_VarRefNode
+sub _get_perl_generator {
+	my ($self, $name)= @_;
+	my $info= $self->namespace->get_function($name)
+		or die "No such function '$name'\n";
+	# If a generator is given, nothing else to do.
+	return $info->{perl_generator} if $info->{perl_generator};
+	
+	# Else need to create a generator around a native perl function
+	$info->{native}
+		or die "Cannot compile function '$name'; no generator or native function given\n";
+	my $fqn= subname($info->{native}) || '';
+	# For security, make reasonably sure that perl will parse the subname as a function name.
+	# This regex is more restrictive than perl's actual allowed identifier names.
+	$fqn =~ /^[A-Za-z_][A-Za-z0-9_]*::([A-Za-z0-9_]+::)*\w+$/u
+		or die "Can't compile function '$name'; native function does not have a valid fully qualified name '$fqn'\n";
+	# Create a generator that injects this function name
+	return sub {
+		$fqn . '(' . join(',', map $_[1]->perlgen($_), @{ $_[2]->parameters }) . ')'
+	};
+}
 
-Generate perl code to access a variable.
+=head2 perlgen_var_access
 
-The default implementation accesses a lexical hashref named C<$vars>,
-fetching the variable name as a single key.  If you want to perform
-deep object traversal by dividing the variable name on "C<.>", this
-is the place to customize for that.
+  $compiler->perlgen_var_access($varname);
 
-For instance, you might replace it with
-
-  sub inline_node_VarRefNode {
-    my ($self, $node)= @_;
-    return '$compiler->get_var($vars, $node->variable_name)';
-  }
-
-and then write a suitable implementation of C<get_var>.
+Generate perl code to access a variable.  If L</variables_via_namespace> is true, this becomes
+a call to C<< $namespace->get_value($varname) >>.  Else it becomes a reference to the variables
+hashref C<< $vars->{$varname} >>.
 
 =cut
 
-sub inline_node_VarRefNode {
-	return '$vars->{'._quoted_perl_string($_[1]->variable_name).'}';
+sub perlgen_var_access {
+	my ($self, $varname)= @_;
+	my $var_str= $self->perlgen_string_literal($varname);
+	return $self->variables_via_namespace
+		? '$namespace->get_value('.$var_str.')'
+		: '$vars->{'.$var_str.'}';
 }
 
-=head2 inline_node_StringNode
+=head2 perlgen_string_literal
 
-Generate perl code for a string constant.
-
-This simply returns a single-quoted string, with the necessary escapes.
-It does not pretty-print control characters, so the resulting source code
-might not be safe to view on a terminal.
+Generate a perl string literal.  This wraps the string with double-quotes and escapes control
+characters and C<["\\\@\$]> using hex-escape notation.
 
 =cut
 
-sub inline_node_StringNode {
-	_quoted_perl_string($_[1]->text);
+sub perlgen_string_literal {
+	my ($self, $string)= @_;
+	$string =~ s/([\0-\x1F\x7f"\@\$\\])/ sprintf("\\x%02x", ord $1) /gex;
+	return qq{"$string"};
 }
 
-=head2 inline_node_NumberNode
+=head2 perlgen_literal
 
-Generate perl code for a numeric constant.
-
-This actually generates a string literal, to protect against loss of leading
-or trailing zeroes, and to ensure it is interpreted as decimal.
-
-If you don't like this behavior, (like if you want octal to be a feature of
-your derived language) feel free to override it.
+If the scalar can be exactly represented by a perl numeric literal, this returns that literal,
+else it wraps the string with qoutes using L</perlgen_string_literal>.
 
 =cut
 
-sub inline_node_NumberNode {
-	# quote numbers too, to protect against loss of zeroes, or octal interpretation.
-	_quoted_perl_string($_[1]->value);
-}
-
-sub _quoted_perl_string {
-	my $x= shift;
-	$x =~ s/(['\\])/\\$1/g;
-	return "'$x'";
-}
-
-=head1 LIBRARY FUNCTIONS
-
-=head2 Core Grammar Functionality
-
-=over
-
-=item sum
-
-=item negative
-
-=item mul
-
-=item div
-
-=item if
-
-=item and
-
-=item or
-
-=item not
-
-=item compare
-
-=back
-
-=cut
-
-sub inline_fn_sum {
-	my ($self, $node)= @_;
-	my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-	return '( '.join(' + ', @arg_code).' )';
-}
-
-sub inline_fn_negative {
-	my ($self, $node)= @_;
-	my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-	@arg_code == 1 or die "Can only negate a single value, not a list\n";
-	return '(-('.$arg_code[0].'))';
-}
-
-sub inline_fn_mul {
-	my ($self, $node)= @_;
-	my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-	return '( '.join(' * ', @arg_code).' )';
-}
-
-sub inline_fn_div {
-	my ($self, $node)= @_;
-	my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-	return '( '.join(' / ', @arg_code).' )';
-}
-
-sub inline_fn_if {
-	my ($self, $node)= @_;
-	my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-	@arg_code == 3 or croak "IF(test, when_true, when_false) requires all 3 parameters\n";
-	return '( '.$arg_code[0].'? '.$arg_code[1].' : '.$arg_code[2].' )';
-}
-
-sub inline_fn_and {
-	my ($self, $node)= @_;
-	my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-	return '( ('.join(' and ', @arg_code).')? 1 : 0)';
-}
-
-sub inline_fn_or {
-	my ($self, $node)= @_;
-	my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-	return '( ('.join(' or ', @arg_code).')? 1 : 0)';
-}
-
-sub inline_fn_not {
-	my ($self, $node)= @_;
-	my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-	@arg_code == 1 or croak "Too many arguments to 'not'\n";
-	return '('.$arg_code[0].'? 0 : 1)';
-}
-
-sub fn_compare {
-	shift; # self not needed
-	my $left= shift;
-	while (@_) {
-		my $op= shift;
-		my $right= shift;
-		my $numeric= looks_like_number($left) && looks_like_number($right);
-		if ($op eq '==' or $op eq '!=') {
-			return 0 unless ($numeric? ($left == $right) : ($left eq $right)) == ($op eq '==');
-		}
-		elsif ($op eq '>=' or $op eq '<') {
-			return 0 unless ($numeric? ($left >= $right) : ($left ge $right)) == ($op eq '>=');
-		}
-		elsif ($op eq '<=' or $op eq '>') {
-			return 0 unless ($numeric? ($left <= $right) : ($left le $right)) == ($op eq '<=');
-		}
-		else {
-			croak "Unhandled operator '$op' in compare()";
-		}
-		$left= $right;
-	}
-	return 1;
-}
-
-=head2 Math Functions
-
-=over
-
-=item round( NUMBER, DIGITS )
-
-Round NUMBER to DIGITS decimal places of precision.  Uses the IEEE
-5-round-to-even algorithm that C gives us.  DIGITS defaults to 0,
-making it round to the nearest integer.
-
-Dies if you attempt to round something that isn't a number.
-
-=item roundup( NUMBER, DIGITS )
-
-Like L</round>, but always round up.
-
-=item rounddown( NUMBER, DIGITS )
-
-Like L</round>, but always round down.
-
-=back
-
-=cut
-
-sub fn_round {
-	my ($self, $num, $digits)= @_;
-	use warnings FATAL => 'numeric';
-	$digits= 0 unless defined $digits;
-	sprintf("%.*lf", $digits, $num);
-}
-
-our $epsilon= 5e-14; # fudge factor for avoiding floating point rounding errors
-sub fn_roundup {
-	my ($self, $num, $digits)= @_;
-	use warnings FATAL => 'numeric';
-	$digits= 0 unless defined $digits;
-	return ceil($num * 10.0**$digits - $epsilon) * 0.1**$digits;
-}
-
-sub fn_rounddown {
-	my ($self, $num, $digits)= @_;
-	use warnings FATAL => 'numeric';
-	$digits= 0 unless defined $digits;
-	return floor($num * 10.0**$digits + $epsilon) * 0.1**$digits;
-}
-
-=head2 String Functions
-
-=over
-
-=item upper( STRING )
-
-Return uppercase version of STRING.
-
-=item lower( STRING )
-
-Return lowercase version of STRING.
-
-=item substr( STRING, OFFSET [, LENGTH ])
-
-Same as perl's builtin.
-
-=item concat( STRING ... )
-
-Returns all arguments concatenated as a string
-
-=item join( SEPARATOR, STRING ... )
-
-Same as perl's builtin.
-
-=back
-
-=cut
-
-sub inline_fn_upper {
-	my ($self, $node)= @_;
-	my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-	@arg_code == 1 or die "Function 'upper' can only take one argument\n";
-	return qq{uc($arg_code[0])};
-}
-
-sub inline_fn_lower {
-	my ($self, $node)= @_;
-	my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-	@arg_code == 1 or die "Function 'lower' can only take one argument\n";
-	return qq{lc($arg_code[0])};
-}
-
-sub inline_fn_substr {
-	my ($self, $node)= @_;
-	my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-	@arg_code == 2 or @arg_code == 3 or die "Function 'substr' requires two or three arguments\n";
-	return 'substr('.join(',', @arg_code).')';
-}
-
-sub inline_fn_length {
-	my ($self, $node)= @_;
-	my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-	@arg_code == 1 or die "Function 'length' can only take one argument\n";
-	return 'length('.$arg_code[0].')';
-}
-
-sub inline_fn_concat {
-	my ($self, $node)= @_;
-	my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-	return @arg_code? 'join(q{}, '.join(',', @arg_code).')' : 'q{}';
-}
-
-sub inline_fn_join {
-	my ($self, $node)= @_;
-	my @arg_code= map { $self->inline_node($_) } @{$node->function_args};
-	@arg_code == 1 or die "Function 'join' requires the first argument (separator)\n";
-	return 'join('.join(',', @arg_code).')';
+sub perlgen_literal {
+	my ($self, $string)= @_;
+	no warnings 'numeric';
+	return ($string+0) eq $string? $string+0 : $self->perlgen_string_literal($string);
 }
 
 1;

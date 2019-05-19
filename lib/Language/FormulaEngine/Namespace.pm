@@ -87,22 +87,56 @@ on setting of L</die_on_unknown_value>.
 
 =head2 get_function
 
-  my $coderef= $ns->get_function( $symbolic_name );
+  $ns->get_function( $symbolic_name );
   
-  # Returns a function of the form:
-  # sub { my ($namespace, $evaluator, $parse_node)= @_; ... return $value; }
+  # Returns:
+  # {
+  #   native         => $coderef,
+  #   evaluator      => $method,
+  #   perl_generator => $method,
+  # }
 
-Lowercases the C<$symbolic_name>, and if that function is found in this namespace, returns a
-coderef matching the above specification.  The default implementation of C<get_function>
-looks for a function named C<< $self->can("eval_$name") >>, which is returned directly.
-If not found, it checks for C<< $self->can("fn_$name") >> and wraps that with a default
-boilerplate that evaluates each argument then calls the function.  If neither is found, it
-returns C<undef>.
+If a function by this name is available in the namespace, ths method returns a hashref of
+information about it.  It may include some or all of the following:
 
-The returned coderef may be blessed and have a mathod C<< ->asperl($compiler, $parse_node) >>
-which returns sanitized perl code for a given compiler and parse tree.
+=over
+
+=item native
+
+A native perl implementation of this function.  Speficially, a non-method plain old function
+that takes a list of values (not parse nodes) and returns the computed value.
+
+Note that if C<< Sub::Util::subname($native) >> returns a name with colons in it, the compiler
+will assume it is safe to inline this function name into the generated perl code.  (but this
+only happens if C<perl_generator> was not available)
+
+=item evaluator
+
+A coderef or method name which will be called on the namespace to evaluate a parse tree for
+this function.
+
+  $value= $namespace->$evaluator( $parse_node );
+
+=item perl_generator
+
+A coderef or method name which will be called on the namespace to convert a parse tree into
+perl source code.
+
+  $perl= $namespace->$generator( $compiler, $parse_node );
+  
+=back
+
+The default implementation lowercases the C<$symbolic_name> and then checks for three method
+names: C<< $self->can("fn_$name") >>, C<< $self->can("nodeval_$name") >> and
+C<< $self->can("perlgen_$name") >>.
 
 =cut
+
+sub get_constant {
+	my ($self, $name)= @_;
+	$name= lc $name;
+	$self->{constants}{$name};
+}
 
 sub get_value {
 	my ($self, $name)= @_;
@@ -113,34 +147,20 @@ sub get_value {
 	: die "Unknown variable or constant '$_[1]'\n";
 }
 
-our %_asperl_cache;
-sub Language::FormulaEngine::Namespace::CompilableFn::maybe_wrap {
-	my ($class, $coderef, $asperl)= @_;
-	return $coderef unless defined $asperl;
-	$_asperl_cache{$coderef}= $asperl;
-	bless $coderef, $class;
-}
-sub Language::FormulaEngine::Namespace::CompilableFn::asperl {
-	return $_asperl_cache{shift()};
-}
-sub Language::FormulaEngine::Namespace::CompilableFn::DESTROY {
-	delete $_asperl_cache{shift()};
-}
-
 sub get_function {
 	my ($self, $name)= @_;
 	$name= lc $name;
-	my $fn= $self->can("fn_$name");
-	my $eval= $self->can("eval_$name");
-	return unless defined $fn || defined $eval;
-	# Default evaluator just evaluates all arguments and then calls a normal function
-	$eval ||= sub {
-		my ($self, $node)= @_;
-		$fn->(map $_->evaluate($self), @{ $node->parameters });
+	my $info= $self->{_function_cache}{$name} ||= do {
+		my $fn= $self->can("fn_$name");
+		my $ev= $self->can("nodeval_$name");
+		my $pl= $self->can("perlgen_$name");
+		$fn || $ev || $pl? {
+			($fn? ( native => $fn ) : ()),
+			($ev? ( evaluator => $ev ) : ()),
+			($pl? ( perl_generator => $pl ) : ())
+		} : 1;
 	};
-
-	my $asperl= $self->can("asperl_$name");
-	Language::FormulaEngine::Namespace::CompilableFn->maybe_wrap($eval, $asperl);
+	return ref $info? $info : undef;
 }
 
 =head1 FUNCTION LIBRARY

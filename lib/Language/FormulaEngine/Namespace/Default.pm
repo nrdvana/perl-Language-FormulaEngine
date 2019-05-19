@@ -72,12 +72,13 @@ use strict;
 use warnings;
 use List::Util ();
 use Math::Trig ();
+use Scalar::Util ();
 use POSIX ();
 
 *fn_sum= *List::Util::sum0;
-sub asperl_sum {
+sub perlgen_sum {
 	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->asperl($_), @{$node->parameters};
+	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( '.join(' + ', @arg_code).' )';
 }
 
@@ -85,17 +86,17 @@ sub fn_negative {
 	@_ == 1 or die "Can only negate a single value, not a list\n";
 	return -$_[0];
 }
-sub asperl_negative {
+sub perlgen_negative {
 	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->asperl($_), @{$node->parameters};
+	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	@arg_code == 1 or die "Can only negate a single value, not a list\n";
 	return '(-('.$arg_code[0].'))';
 }
 
 *fn_mul= *List::Util::product;
-sub asperl_mul {
+sub perlgen_mul {
 	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->asperl($_), @{$node->parameters};
+	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( '.join(' * ', @arg_code).' )';
 }
 
@@ -104,56 +105,56 @@ sub fn_div {
 	$_[1] or die "division by zero\n";
 	return $_[0] / $_[1];
 }
-sub asperl_div {
+sub perlgen_div {
 	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->asperl($_), @{$node->parameters};
+	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( '.join(' / ', @arg_code).' )';
 }
 
-sub eval_if { # customize eval_ to provide lazy evaluation of arguments
+sub nodeval_if { # customize nodeval_ to provide lazy evaluation of arguments
 	my ($self, $node)= @_;
 	@{$node->parameters} == 3 or die "IF(test, when_true, when_false) requires all 3 parameters\n";
 	my $bool= $node->parameters->[0]->evaluate($self);
 	return $node->parameters->[$bool? 1 : 2]->evaluate($self);
 }
-sub asperl_if {
+sub perlgen_if {
 	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->asperl($_), @{$node->parameters};
+	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	@arg_code == 3 or die "IF(test, when_true, when_false) requires all 3 parameters\n";
 	return '( '.$arg_code[0].'? '.$arg_code[1].' : '.$arg_code[2].' )';
 }
 
-sub eval_and { # customize eval_ to provide lazy evaluation of arguments
+sub nodeval_and { # customize nodeval_ to provide lazy evaluation of arguments
 	my ($self, $node)= @_;
 	$_->evaluate($self) or return 0
 		for @{ $node->parameters };
 	return 1;
 }
-sub asperl_and {
+sub perlgen_and {
 	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->asperl($_), @{$node->parameters};
+	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( ('.join(' and ', @arg_code).')? 1 : 0)';
 }
 
-sub eval_or {
+sub nodeval_or {
 	my ($self, $node)= @_;
 	$_->evaluate($self) and return 1
 		for @{ $node->parameters };
 	return 0;
 }
-sub asperl_or {
+sub perlgen_or {
 	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->asperl($_), @{$node->parameters};
+	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( ('.join(' or ', @arg_code).')? 1 : 0)';
 }
 
 sub fn_not {
 	@_ == 1 or die "Too many arguments to 'not'\n";
-	return $_[0]? 1 : 0;
+	return $_[0]? 0 : 1;
 }
-sub asperl_not {
+sub perlgen_not {
 	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->asperl($_), @{$node->parameters};
+	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	@arg_code == 1 or die "Too many arguments to 'not'\n";
 	return '('.$arg_code[0].'? 0 : 1)';
 }
@@ -163,7 +164,7 @@ sub fn_compare {
 	while (@_) {
 		my $op= shift;
 		my $right= shift;
-		my $numeric= looks_like_number($left) && looks_like_number($right);
+		my $numeric= Scalar::Util::looks_like_number($left) && Scalar::Util::looks_like_number($right);
 		if ($op eq '==' or $op eq '!=') {
 			return 0 unless ($numeric? ($left == $right) : ($left eq $right)) == ($op eq '==');
 		}
@@ -312,20 +313,8 @@ Same as perl's builtin.
 =cut
 
 *fn_upper= *CORE::uc;
-sub asperl_upper {
-	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->asperl($_), @{$node->parameters};
-	@arg_code == 1 or die "Function 'upper' can only take one argument\n";
-	return "uc($arg_code[0])";
-}
 
 *fn_lower= *CORE::lc;
-sub asperl_lower {
-	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->asperl($_), @{$node->parameters};
-	@arg_code == 1 or die "Function 'lower' can only take one argument\n";
-	return "lc($arg_code[0])";
-}
 
 *fn_substr= *CORE::substr;
 
