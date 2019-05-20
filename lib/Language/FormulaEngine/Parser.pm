@@ -377,7 +377,7 @@ sub parse_unit_expr {
 
 	if ($self->{token_type} eq '-') {
 		$self->next_token;
-		return $self->parse_unit_expr->get_negative;
+		return $self->get_negative($self->parse_unit_expr);
 	}
 
 	if ($self->{token_type} eq '(') {

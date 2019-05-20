@@ -182,6 +182,23 @@ sub fn_compare {
 	return 1;
 }
 
+=head2 Utility Functions
+
+=over
+
+=item choose( offset, val1, val2, val3, ... )
+
+Given a 1-based offset, return the value of the Nth parameter.
+
+=back
+
+=cut
+
+sub fn_choose {
+	$_[0] > 0 and $_[0] < @_ or die "CHOSE() selector out of bounds ($_[0])";
+	return $_[$_[0]];
+}
+
 =head2 Math Functions
 
 =over
@@ -218,6 +235,36 @@ Return sum of numbers divided by number of arguments
 
 Return number converted to different base, with optional leading zeroes to reach min_length.
 
+=item ceiling( number, step=1 )
+
+Round a number up to the next multiple of C<step>.  If step is negative, this rounds away from
+zero in the negative direction.
+
+=item cos( angle )
+
+Cosine of C<angle> in radians
+
+=item cot( ratio )
+
+Return the angle for the triangle ratio adjacent/opposite.
+
+=item degrees( angle_in_radians )
+
+Convert radians to degrees
+
+=item exp( power )
+
+Return base of the natural log raised to the specified power.
+
+=item fact( n )
+
+Compute factorial of C<n>.  (C<< 1 * 2 * 3 * ... n >>)
+
+=item floor( number, step=1 )
+
+Round a number down to the previous multiple of C<step>.  If step is negative, this rounds
+toward zero in the positive direction.
+
 =item round( number, digits=0 )
 
 Round NUMBER to DIGITS decimal places of precision.  Uses the IEEE
@@ -228,11 +275,11 @@ Dies if you attempt to round something that isn't a number.
 
 =item roundup( number, digits=0 )
 
-Like L</round>, but always round up.
+Like L</round>, but always round up.  See also L</ceiling>.
 
 =item rounddown( number, digits=0 )
 
-Like L</round>, but always round down.
+Like L</round>, but always round down.  See also L</floor>.
 
 =back
 
@@ -243,13 +290,16 @@ Like L</round>, but always round down.
 *fn_acot= *Math::Trig::acot;
 *fn_asin= *Math::Trig::asin;
 *fn_atan= *Math::Trig::atan;
+
 sub fn_atan2 {
 	# Perl differs in argument order from popular spreadsheet programs
-	Math::Trig::atan2($_[1], $_[0])
+	atan2($_[1], $_[0])
 }
+
 sub fn_average {
-	List::Utils::sum0(@_) / @_;
+	List::Util::sum0(@_) / @_;
 }
+
 sub fn_base {
 	my ($num, $radix, $min_length)= @_;
 	my $digits= '';
@@ -262,31 +312,72 @@ sub fn_base {
 	return $pad > 0? '0'x$pad . $digits : $digits;
 }
 
+*fn_cos= *CORE::cos;
+*fn_degrees= *Math::Trig::rad2deg;
+*fn_exp= *CORE::exp;
+sub fn_fact {
+	my $n= int($_[0]);
+	return 1 unless $n;
+	$n > 0 or die "Can't compute factorial of negative number '$n'";
+	List::Util::product(1 .. $n);
+}
 sub fn_round {
 	my ($num, $digits)= @_;
 	use warnings FATAL => 'numeric';
-	$digits= 0 unless defined $digits;
-	sprintf("%.*lf", $digits, $num);
+	my $scale= 0.1 ** ($_[1] || 0);
+	return POSIX::round($num / $scale) * $scale;
 }
 
 our $epsilon= 5e-14; # fudge factor for avoiding floating point rounding errors
-sub fn_roundup {
-	my ($num, $digits)= @_;
+sub fn_ceiling {
+	my ($num, $step)= @_;
 	use warnings FATAL => 'numeric';
-	$digits= 0 unless defined $digits;
-	return POSIX::ceil($num * 10.0**$digits - $epsilon) * 0.1**$digits;
+	$step= 1 unless defined $step;
+	return POSIX::ceil($num / $step - $epsilon) * $step;
 }
 
-sub fn_rounddown {
-	my ($num, $digits)= @_;
+sub fn_floor {
+	my ($num, $step)= @_;
 	use warnings FATAL => 'numeric';
-	$digits= 0 unless defined $digits;
-	return POSIX::floor($num * 10.0**$digits + $epsilon) * 0.1**$digits;
+	$step= 1 unless defined $step;
+	return POSIX::floor($num / $step + $epsilon) * $step;
 }
+sub fn_roundup {
+	use warnings FATAL => 'numeric';
+	fn_ceiling($_[0], 0.1 ** ($_[1] || 0));
+}
+sub fn_rounddown {
+	use warnings FATAL => 'numeric';
+	fn_floor($_[0], 0.1 ** ($_[1] || 0));
+}
+*fn_sin= *CORE::sin;
 
 =head2 String Functions
 
 =over
+
+=item char( codepoint_value )
+
+Return a unicode character.
+
+=item clean( string )
+
+Returns C<string> after removing all non-printable characters (defined as C<< [:^print:] >> )
+
+=item code( string )
+
+Opposite of L</char>, known as C<ord()> in other languages.  Returns the unicode codepoint
+number of the first character of the string.
+
+=item find( needle, haystack, from_offset=1 )
+
+Return the character offset of C<needle> from start of C<haystack>, beginning the search at
+from_offset.  All offsets are 1-based.
+
+=item fixed( number, decimals=2, no_commas=false )
+
+Return the number formatted with a fixed number of decimal places.  By default, it gets commas
+added in the USA notation, but this can be disabled.
 
 =item upper( string )
 
@@ -312,19 +403,104 @@ Same as perl's builtin.
 
 =cut
 
+*fn_char= *CORE::chr;
+sub fn_clean {
+	my $str= shift;
+	$str =~ s/[[:^print:]]+//g;
+	$str;
+}
+*fn_code= *CORE::ord;
 *fn_upper= *CORE::uc;
-
 *fn_lower= *CORE::lc;
-
 *fn_substr= *CORE::substr;
-
 *fn_length= *CORE::length;
 
 sub fn_concatenate {
 	join '', @_;
 }
 *fn_concat= *fn_concatenate;
-
 *fn_join= *CORE::join;
+
+sub fn_find {
+	my ($needle, $haystack, $ofs)= @_;
+	$ofs= 1 unless $ofs && $ofs > 0;
+	return index($haystack, $needle, $ofs) + 1;
+}
+
+sub fn_fixed {
+	my ($number, $places, $comma)= @_;
+	$places= 2 unless defined $places;
+	$comma= ',' unless defined $comma && (!$comma or $comma eq '.');
+	$number= $places > 0? sprintf("%.*f", $places, $number) : fn_round($number, $places);
+	if ($comma) {
+		$number =~ s/\./,/ if $comma eq '.';
+		my $tmp= reverse substr($number, 0, $places > 0? -($places+1) : length $number);
+		$tmp =~ s/(\d\d\d)(?=\d)/$1$comma/g;
+		substr($number, 0, $places > 0? -($places+1) : length $number)= reverse $tmp;
+	}
+	return $number;
+}
+
+=head2 DateTime Functions
+
+Date math is implemented using the L<DateTime> module.  Strings are coerced into dates using
+the L<DateTime::Format::Flexible> module for any parameter where a spreadsheet function would
+normally expect a date value.  "Since 1900" date serial numbers are not used at all.
+
+=over
+
+=item date( year, month, day )
+
+Convert a (year,month,day) triplet into a date.
+
+=item datedif( start_date, end_date, unit )
+
+Calculate difference bwteen two dates.  Unit can be one of: C<"Y"> (whole years), C<"M"> (whole
+months), C<"D"> (whole days).  Dates can be parsed from any string resembling a date.
+
+=item day( start_date )
+
+Returns the day number of a date
+
+=item days( start_date, end_date )
+
+Returns number of days difference between start and end date.
+
+=item eomonth( start_date, months )
+
+Calculate the date of End-Of-Month at some offset from the start date.
+
+=back
+
+=cut
+
+sub _date {
+	return $_[0] if ref($_[0])->isa('DateTime');
+	DateTime::Format::Flexible->parse_datetime($_[0]) or die "Not a date: $_[0]\n"
+}
+sub fn_date {
+	my ($y, $m, $d)= @_;
+	DateTime->new(year => $y, month => $m, day => $d);
+}
+
+sub fn_datedif {
+	my ($start, $end, $unit)= @_;
+	$unit= uc($unit || '');
+	if ($unit eq 'Y') { return _date($end)->delta_md(_date($start))->in_years }
+	if ($unit eq 'M') { return _date($end)->delta_md(_date($start))->in_months }
+	if ($unit eq 'D') { return _date($end)->delta_days(_date($start))->in_days }
+	die "Unsupported datedif unit '$unit'\n";
+}
+sub fn_day {
+	_date($_[0])->day
+}
+sub fn_days {
+	my ($start, $end)= @_;
+	return _date($end)->delta_days(_date($start))->in_days
+}
+sub fn_eomonth {
+	my ($start, $end)= @_;
+	_date($start)->clone->add(months => $end+1)->truncate(to => 'month')->subtract(days => 1);
+}
 
 1;
