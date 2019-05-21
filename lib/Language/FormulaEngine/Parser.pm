@@ -558,6 +558,9 @@ sub Language::FormulaEngine::Parser::Node::Call::evaluate {
 	# Else if the namespace supplies a native plain-old-function, convert the parameters
 	# from parse nodes to plain values and then call the function.
 	elsif (my $fn= $info->{native}) {
+		# The function might be a perl builtin, so need to activate the same
+		# warning flags that would be used by the compiled version.
+		use warnings FATAL => 'numeric', 'uninitialized';
 		my @args= map $_->evaluate($namespace), @{ $self->parameters };
 		return $fn->(@args);
 	}

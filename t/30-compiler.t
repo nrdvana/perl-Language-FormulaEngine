@@ -9,13 +9,16 @@ my @tests= (
 		q|( $vars->{"foo"} + 5 )|
 	],
 	[ 'Round(3.5154321, 6)',
-		q|Language::FormulaEngine::Namespace::V0::fn_round(3.5154321,6)|
+		q|Language::FormulaEngine::Namespace::Default::fn_round(3.5154321,6)|
 	],
 	[ 'foo+1*baz+bar/6/7/8',
 		q|( $vars->{"foo"} + ( 1 * $vars->{"baz"} ) + ( ( ( $vars->{"bar"} / 6 ) / 7 ) / 8 ) )|
 	],
 	[ 'IF(b<=a,round(round(e,3),2),foo_bar.sku)',
-		q|( Language::FormulaEngine::Namespace::V0::fn_compare($vars->{"b"},"<=",$vars->{"a"})? Language::FormulaEngine::Namespace::V0::fn_round(Language::FormulaEngine::Namespace::V0::fn_round($vars->{"e"},3),2) : $vars->{"foo_bar.sku"} )|
+		q|( Language::FormulaEngine::Namespace::Default::fn_compare($vars->{"b"},"<=",$vars->{"a"})?|
+		.q| Language::FormulaEngine::Namespace::Default::fn_round(|
+		.q|Language::FormulaEngine::Namespace::Default::fn_round($vars->{"e"},3),2)|
+		.q| : $vars->{"foo_bar.sku"} )|
 	],
 	[ 'a and not b',
 		q|( ($vars->{"a"} and ($vars->{"b"}? 0 : 1))? 1 : 0)|,

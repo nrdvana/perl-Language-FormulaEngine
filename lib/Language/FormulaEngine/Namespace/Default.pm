@@ -1,5 +1,43 @@
 package Language::FormulaEngine::Namespace::Default;
-our @ISA= ( 'Language::FormulaEngine::Namespace::V0' );
+use parent 'Language::FormulaEngine::Namespace';
+use strict;
+use warnings FATAL => 'numeric', 'uninitialized';
+use Try::Tiny;
+use List::Util ();
+use Math::Trig ();
+use Scalar::Util ();
+use POSIX ();
+use namespace::clean;
+
+# No official versioned namespace yet, but this code is for when I publish one.
+
+#sub _fake_require {
+#	my $version= shift;
+#	$INC{'Language/FormulaEngine/Namespace/Default/V'.$version.'.pm'}=
+#		$INC{'Language/FormulaEngine/Namespace/Default.pm'};
+#}
+#
+#sub _declare_versioned_namespace {
+#	my ($from_ver, $to_ver, @list)= @_;
+#	no strict 'refs';
+#	my $from_stash= \%{ __PACKAGE__ . '::V' . $from_ver . '::' };
+#	my $to_stash= \%{ __PACKAGE__ . '::V' . $to_ver . '::' };
+#	if (@list) {
+#		for (@list) {
+#			defined $from_stash->{$_} or die "Version $from_ver does not contain method $_";
+#			$to_stash->{$_}= $from_stash->{$_};
+#		}
+#	} else {
+#		for (keys %$from_stash) {
+#			$to_stash->{$_}= $from_stash->{$_}
+#				if defined $from_stash->{$_}{CODE} && !defined $to_stash->{$_};
+#		}
+#	}
+#	@{ __PACKAGE__ . '::V' . $to_ver . '::ISA' }= ( 'Language::FormulaEngine::Namespace' );
+#}
+#
+#_fake_require 0;
+#@Language::FormulaEngine::Namespace::Default::V0::ISA= ( __PACKAGE__ );
 
 =head1 DESCRIPTION
 
@@ -27,12 +65,6 @@ These are the methods that implement the infix operators.
 (Since V0)
 
 =item C<< div( numerator, denominator ) >>
-
-(Since V0)
-
-=item C<< if( condition, val_if_true, val_if_false ) >>
-
-This works for both numbers and strings.
 
 (Since V0)
 
@@ -65,15 +97,6 @@ comparison otherwise.
 =back
 
 =cut
-
-package Language::FormulaEngine::Namespace::V0;
-use parent 'Language::FormulaEngine::Namespace';
-use strict;
-use warnings;
-use List::Util ();
-use Math::Trig ();
-use Scalar::Util ();
-use POSIX ();
 
 *fn_sum= *List::Util::sum0;
 sub perlgen_sum {
@@ -109,19 +132,6 @@ sub perlgen_div {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( '.join(' / ', @arg_code).' )';
-}
-
-sub nodeval_if { # customize nodeval_ to provide lazy evaluation of arguments
-	my ($self, $node)= @_;
-	@{$node->parameters} == 3 or die "IF(test, when_true, when_false) requires all 3 parameters\n";
-	my $bool= $node->parameters->[0]->evaluate($self);
-	return $node->parameters->[$bool? 1 : 2]->evaluate($self);
-}
-sub perlgen_if {
-	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
-	@arg_code == 3 or die "IF(test, when_true, when_false) requires all 3 parameters\n";
-	return '( '.$arg_code[0].'? '.$arg_code[1].' : '.$arg_code[2].' )';
 }
 
 sub nodeval_and { # customize nodeval_ to provide lazy evaluation of arguments
@@ -186,9 +196,24 @@ sub fn_compare {
 
 =over
 
-=item choose( offset, val1, val2, val3, ... )
+=item C<< choose( offset, val1, val2, val3, ... ) >>
 
 Given a 1-based offset, return the value of the Nth parameter.
+
+=item C<< if( condition, val_if_true, val_if_false ) >>
+
+If C<condition> is "true" (Perl interpretation) return C<val_if_true>, else C<val_if_false>.
+
+=item C<< iferror( value_maybe_error, alternate_value ) >>
+
+If C<value_maybe_error> does not throw an exception, return it, else return the
+C<alternate_value>.
+
+=item C<< ifs( condition1, value1, condition2, value2, ... ) >>
+
+A simplified sequence of IF functions.  If C<condition1> is true, it returns C<value1>, else if
+C<condition2> is true it returns C<value2>, and so on.  If no condition is true it dies.  (use
+a final true condition and value to provide a default)
 
 =back
 
@@ -199,73 +224,126 @@ sub fn_choose {
 	return $_[$_[0]];
 }
 
+sub nodeval_if { # customize nodeval_ to provide lazy evaluation of arguments
+	my ($self, $node)= @_;
+	@{$node->parameters} == 3 or die "IF(test, when_true, when_false) requires all 3 parameters\n";
+	my $bool= $node->parameters->[0]->evaluate($self);
+	return $node->parameters->[$bool? 1 : 2]->evaluate($self);
+}
+sub perlgen_if {
+	my ($self, $compiler, $node)= @_;
+	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
+	@arg_code == 3 or die "IF(test, when_true, when_false) requires all 3 parameters\n";
+	return '( '.$arg_code[0].'? '.$arg_code[1].' : '.$arg_code[2].' )';
+}
+
+sub nodeval_iferror {
+	my ($self, $node)= @_;
+	my $ret;
+	try {
+		$ret= $node->parameters->[0]->evaluate($self);
+	} catch {
+		my $err= $node->parameters->[1];
+		$ret= defined $err? $err->evaluate($self) : '';
+	};
+	return $ret;
+}
+sub perlgen_iferror {
+	my ($self, $compiler, $node)= @_;
+	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
+	return '(do { my $x; eval { $x=('.$arg_code[0].'); 1 }? $x : ('.$arg_code[1].') })';
+}
+
+sub nodeval_ifs {
+	my ($self, $node)= @_;
+	(my @todo= @{$node->parameters}) & 1
+		and die "IFS(cond, val, ...) requires an even number of parameters\n";
+	while (@todo) {
+		my ($cond, $val)= splice @todo, 0, 2;
+		return $val->evaluate($self) if $cond->evaluate($self);
+	}
+	die "IFS() had no true conditions\n";
+}
+sub perlgen_ifs {
+	my ($self, $compiler, $node)= @_;
+	(my @arg_code= map $compiler->perlgen($_), @{$node->parameters}) & 1
+		and die "IFS(cond, val, ...) requires an even number of parameters\n";
+	my $expr= '(';
+	while (@arg_code) {
+		my ($cond, $val)= splice @arg_code, 0, 2;
+		$expr .= "($cond)? ($val) : ";
+	}
+	$expr .= 'die "IFS() had no true conditions\n")';
+	return $expr;
+}
+
 =head2 Math Functions
 
 =over
 
-=item abs( number )
+=item C<< abs( number ) >>
 
 Return absolute value of number
 
-=item acos( ratio )
+=item C<< acos( ratio ) >>
 
 Return angle in radians of the ratio adjacent/hypotenuse.
 
-=item acot( ratio )
+=item C<< acot( ratio ) >>
 
 Return angle in radians of the ratio adjacent/opposite.
 
-=item asin( ratio )
+=item C<< asin( ratio ) >>
 
 Return angle in radians of the ratio opposite/hypotenuse.
 
-=item atan( ratio )
+=item C<< atan( ratio ) >>
 
 Return angle in radians of the ratio opposite/adjacent.
 
-=item atan2( x, y )
+=item C<< atan2( x, y ) >>
 
 Same as atan, but without division, so x=0 returns PI/2 instead of division error.
 
-=item average( num1, ... )
+=item C<< average( num1, ... ) >>
 
 Return sum of numbers divided by number of arguments
 
-=item base( num1, radix, min_length=0 )
+=item C<< base( num1, radix, min_length=0 ) >>
 
 Return number converted to different base, with optional leading zeroes to reach min_length.
 
-=item ceiling( number, step=1 )
+=item C<< ceiling( number, step=1 ) >>
 
 Round a number up to the next multiple of C<step>.  If step is negative, this rounds away from
 zero in the negative direction.
 
-=item cos( angle )
+=item C<< cos( angle ) >>
 
 Cosine of C<angle> in radians
 
-=item cot( ratio )
+=item C<< cot( ratio ) >>
 
 Return the angle for the triangle ratio adjacent/opposite.
 
-=item degrees( angle_in_radians )
+=item C<< degrees( angle_in_radians ) >>
 
 Convert radians to degrees
 
-=item exp( power )
+=item C<< exp( power ) >>
 
 Return base of the natural log raised to the specified power.
 
-=item fact( n )
+=item C<< fact( n ) >>
 
 Compute factorial of C<n>.  (C<< 1 * 2 * 3 * ... n >>)
 
-=item floor( number, step=1 )
+=item C<< floor( number, step=1 ) >>
 
 Round a number down to the previous multiple of C<step>.  If step is negative, this rounds
 toward zero in the positive direction.
 
-=item round( number, digits=0 )
+=item C<< round( number, digits=0 ) >>
 
 Round NUMBER to DIGITS decimal places of precision.  Uses the IEEE
 5-round-to-even algorithm that C gives us.  DIGITS defaults to 0,
@@ -273,11 +351,11 @@ making it round to the nearest integer.
 
 Dies if you attempt to round something that isn't a number.
 
-=item roundup( number, digits=0 )
+=item C<< roundup( number, digits=0 ) >>
 
 Like L</round>, but always round up.  See also L</ceiling>.
 
-=item rounddown( number, digits=0 )
+=item C<< rounddown( number, digits=0 ) >>
 
 Like L</round>, but always round down.  See also L</floor>.
 
@@ -323,7 +401,6 @@ sub fn_fact {
 }
 sub fn_round {
 	my ($num, $digits)= @_;
-	use warnings FATAL => 'numeric';
 	my $scale= 0.1 ** ($_[1] || 0);
 	return POSIX::round($num / $scale) * $scale;
 }
@@ -331,23 +408,19 @@ sub fn_round {
 our $epsilon= 5e-14; # fudge factor for avoiding floating point rounding errors
 sub fn_ceiling {
 	my ($num, $step)= @_;
-	use warnings FATAL => 'numeric';
 	$step= 1 unless defined $step;
 	return POSIX::ceil($num / $step - $epsilon) * $step;
 }
 
 sub fn_floor {
 	my ($num, $step)= @_;
-	use warnings FATAL => 'numeric';
 	$step= 1 unless defined $step;
 	return POSIX::floor($num / $step + $epsilon) * $step;
 }
 sub fn_roundup {
-	use warnings FATAL => 'numeric';
 	fn_ceiling($_[0], 0.1 ** ($_[1] || 0));
 }
 sub fn_rounddown {
-	use warnings FATAL => 'numeric';
 	fn_floor($_[0], 0.1 ** ($_[1] || 0));
 }
 *fn_sin= *CORE::sin;
@@ -356,46 +429,46 @@ sub fn_rounddown {
 
 =over
 
-=item char( codepoint_value )
+=item C<< char( codepoint_value ) >>
 
 Return a unicode character.
 
-=item clean( string )
+=item C<< clean( string ) >>
 
 Returns C<string> after removing all non-printable characters (defined as C<< [:^print:] >> )
 
-=item code( string )
+=item C<< code( string ) >>
 
 Opposite of L</char>, known as C<ord()> in other languages.  Returns the unicode codepoint
 number of the first character of the string.
 
-=item find( needle, haystack, from_offset=1 )
+=item C<< find( needle, haystack, from_offset=1 ) >>
 
 Return the character offset of C<needle> from start of C<haystack>, beginning the search at
 from_offset.  All offsets are 1-based.
 
-=item fixed( number, decimals=2, no_commas=false )
+=item C<< fixed( number, decimals=2, no_commas=false ) >>
 
 Return the number formatted with a fixed number of decimal places.  By default, it gets commas
 added in the USA notation, but this can be disabled.
 
-=item upper( string )
+=item C<< upper( string ) >>
 
 Return uppercase version of STRING.
 
-=item lower( string )
+=item C<< lower( string ) >>
 
 Return lowercase version of STRING.
 
-=item substr( string, offset, length=max )
+=item C<< substr( string, offset, length=max ) >>
 
 Same as perl's builtin.
 
-=item concat, concatenate( string, ... )
+=item C<< concat, concatenate( string, ... ) >>
 
 Returns all arguments concatenated as a string
 
-=item textjoin, join( separator, string, ... )
+=item C<< textjoin, join( separator, string, ... ) >>
 
 Same as perl's builtin.
 
@@ -449,26 +522,30 @@ normally expect a date value.  "Since 1900" date serial numbers are not used at 
 
 =over
 
-=item date( year, month, day )
+=item C<< date( year, month, day ) >>
 
 Convert a (year,month,day) triplet into a date.
 
-=item datedif( start_date, end_date, unit )
+=item C<< datedif( start_date, end_date, unit ) >>
 
 Calculate difference bwteen two dates.  Unit can be one of: C<"Y"> (whole years), C<"M"> (whole
 months), C<"D"> (whole days).  Dates can be parsed from any string resembling a date.
 
-=item day( start_date )
+=item C<< day( date ) >>
 
 Returns the day number of a date
 
-=item days( start_date, end_date )
+=item C<< days( start_date, end_date ) >>
 
 Returns number of days difference between start and end date.
 
-=item eomonth( start_date, months )
+=item C<< eomonth( start_date, months ) >>
 
 Calculate the date of End-Of-Month at some offset from the start date.
+
+=item C<< hour( date ) >>
+
+Return the hour field of a date.
 
 =back
 
@@ -501,6 +578,9 @@ sub fn_days {
 sub fn_eomonth {
 	my ($start, $end)= @_;
 	_date($start)->clone->add(months => $end+1)->truncate(to => 'month')->subtract(days => 1);
+}
+sub fn_hour {
+	_date($_[0])->hour
 }
 
 1;

@@ -81,7 +81,8 @@ sub test_scanner {
 	for (@tests) {
 		my ($str, @tokens)= @$_;
 		subtest '"'.str_escape($str).'"' => sub {
-			my $p= new_ok( 'Language::FormulaEngine::Parser', [ input => $str ], 'new scanner' );
+			my $p= new_ok( 'Language::FormulaEngine::Parser', [], 'new parser' );
+			$p->{input}= $str;
 			$p->next_token;
 			my $i= 1;
 			for (@tokens) {

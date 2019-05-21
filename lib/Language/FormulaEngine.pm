@@ -4,7 +4,7 @@ use Carp;
 use Try::Tiny;
 use Module::Runtime 'require_module';
 
-# ABSTRACT: Extensible parser/compiler for simple expression language like used for spreadsheets
+# ABSTRACT: Parser/Interpreter/Compiler for simple spreadsheet formula language
 # VERSION
 
 =head1 SYNOPSIS
@@ -14,39 +14,48 @@ use Module::Runtime 'require_module';
   my $engine= Language::FormulaEngine->new();
   $engine->evaluate( 'if(foo, round(bar, 3), baz*100)', $vars );
   
-  # or for more speed
+  # or for more speed on repeat evaluations
   my $formula= $engine->compile( 'if(foo, round(bar, 3), baz*100)' );
-  print $formula->evaluate($vars);
+  print $formula->($vars);
   
   
-  package MyContext {
+  package MyNamespace {
     use Moo;
-    extends 'Language::FormulaEngine::Namespace::V0';
+    extends 'Language::FormulaEngine::Namespace::Default';
     sub fn_customfunc { print "arguments are ".join(', ', @_)."\n"; }
   };
-  my $engine= Language::FormulaEngine->new(compiler => MyContext->new);
+  my $engine= Language::FormulaEngine->new(namespace => MyNamespace->new);
   my $formula= $engine->compile( 'CustomFunc(baz,2,3)' );
   $formula->($vars); # prints "arguments are 42, 2, 3\n"
 
 =head1 DESCRIPTION
 
-This set of modules implement a parser, evaluator, and optional code generator for a
-simple expression language similar to those used in spreadsheets.
+This set of modules implement a parser, evaluator, and optional code generator for a simple
+expression language similar to those used in spreadsheets.
+The intent of this module is to help you add customizable behavior to your applications that an
+"office power-user" can quickly learn and use, while also not opening up security holes in your
+application.
 
-The intent of this module is to help you write domain-specific languages for
-"power users" who are not programmers (or maybe just not trusted) to give them the
-ability to implement custom calculations or boolean logic in their system without
-needing you to constantly make code changes or endless additional checkbox-activated
-features.
+In a typical business application, there will always be another few use cases that the customer
+didn't know about or think to tell you about, and adding support for these use cases can result
+in a never-ending expansion of options and chekboxes and dropdowns, and a lot of time spent
+deciding the logical way for them to all interact.
+One way to solve this is to provide some scripting support for the customer to use.  However,
+you want to make the language easy to learn, "nerfed" enough for them to use safely, and
+prevent security vulnerabilities.  The challenge is finding a language that they find familiar,
+that is easy to write correct programs with, and that dosn't expose any peice of the system
+that you didn't intend to expose.  I chose "spreadsheet formula language" for a project back in
+2012 and it worked out really well, so I decided to give it a makeover and publish it.
 
-The default language is pure-functional, in that each operation has exactly one return
-value, and cannot modify variables.  There is no assignment, loops, or nested data
-structures, though these can be added if you try hard enough.  (but if you want them,
-there are L<some other modules|/"SEE ALSO"> you might consider.)
-
-See L<Language::FormulaEngine::Parser> for the grammer details of the default language.
-The default language is not Excel-compatible, but could be made so with a little
-effort by someone who is intimately familiar with Excel.
+The default syntax is pure-functional, in that each operation has exactly one return value, and
+cannot modify variables; in fact none of the default functions have any side-effects.  There is
+no assignment, looping, or nested data structures.  The language does have a bit of a Perl twist
+to it's semantics, like throwing exceptions rather than returning C<< #VALUE! >>, fluidly
+interpreting values as strings or integers, and using L<DateTime> instead of days-since-1900
+numbers for dates, but most users probably won't mind.  And, all these decisions are fairly
+easy to change with a subclass.
+(but if you want big changes, you should L<review your options|/"SEE ALSO"> to make sure you're
+starting with the right module.)
 
 The language is written with security in mind, and (until you start making changes)
 should be safe for most uses, since the functional design promotes O(1) complexity
@@ -60,11 +69,11 @@ yourself if you plan to use it where security is a concern.
 
 =item *
 
-Standard design with full scanner, parser, syntax tree, namespaces, and compiler.
+Standard design with scanner/parser, syntax tree, namespaces, and compiler.
 
 =item *
 
-Can generate perl coderefs for fast repeated execution
+Can compile to perl coderefs for fast repeated execution
 
 =item *
 
@@ -80,7 +89,7 @@ Light-weight, few dependencies, clean code
 
 =item *
 
-Top-down parse, which is easier to work with and gives helpful error messages,
+Recursive-descent parse, which is easier to work with and gives helpful error messages,
 though could get a bit slow if you extend the grammar too much.
 (for simple grammars like this, it's pretty fast)
 
@@ -91,27 +100,28 @@ though could get a bit slow if you extend the grammar too much.
 =head2 parser
 
 A parser for the language.  Responsible for tokenizing the input and building the
-parse tree.  You can initialize this attribute with an object instance, a class name,
-or arguments for the default parser.
+parse tree.
 
-Defaults to an instance of L<Language::FormulaEngine::Parser>.
+Defaults to an instance of L<Language::FormulaEngine::Parser>. You can initialize this
+attribute with an object instance, a class name, or arguments for the default parser.
 
 =head2 namespace
 
 A namespace for looking up functions or constants.  Also determines some aspects of how the
 language works, and responsible for providing the perl code when compiling expressions.
-You can initialize this with an object instance, class name, version number for one of the
-::Namespace::Vx modules, or hashref of arguments for the constructor.
 
-Defaults to an instance of L<Language::FormulaEngine::Namespace::V0>
+Defaults to an instance of L<Language::FormulaEngine::Namespace::Default>.
+You can initialize this with an object instance, class name, version number for the default
+namespace, or hashref of arguments for the constructor.
 
 =head2 compiler
 
-A compiler for the parse tree.  Responsible for generating Perl code.
-You can initialize this attribute with a class instance, a class name,
-or arguments for the default parser.
+A compiler for the parse tree.  Responsible for generating Perl coderefs, though the Namespace
+does most of the perl code generation.
 
-Defaults to an instance of L<Language::FormulaEngine::Compiler>
+Defaults to an instance of L<Language::FormulaEngine::Compiler>.
+You can initialize this attribute with a class instance, a class name, or arguments for the
+default compiler.
 
 =cut
 
@@ -123,7 +133,7 @@ has parser => (
 has namespace => (
 	is => 'lazy',
 	builder => sub {},
-	coerce => sub { _coerce_instance($_[0], 'get_function', 'Language::FormulaEngine::Namespace::V0') },
+	coerce => sub { _coerce_instance($_[0], 'get_function', 'Language::FormulaEngine::Namespace::Default') },
 	trigger => sub { my ($self, $val)= @_; $self->compiler->namespace($val) },
 );
 has compiler => (
@@ -142,7 +152,7 @@ sub _coerce_instance {
 	return $thing if ref $thing and ref($thing)->can($req_method);
 	
 	my $class= !(defined $thing || ref $thing)? $default_class
-		: ($req_method eq 'get_function' && $thing =~ /^\d+$/)? "Language::FormulaEngine::Namespace::V$thing"
+		: ($req_method eq 'get_function' && $thing =~ /^[0-9]+$/)? "Language::FormulaEngine::Namespace::Default::V$thing"
 		: $thing;
 	require_module($class)
 		unless $class->can('new');
@@ -212,7 +222,7 @@ C<fn_>.
 
 The default implementation of Namespace requires all variables to be stored in a single hashref.
 This default is safe and fast.  If you want to traverse nested data structures or call methods,
-you also need to subclass the Namespace C<get_value> method.
+you also need to subclass L<Language::FormulaEngine::Namespace/get_value>.
 
 =head2 Changing Semantics
 
@@ -229,8 +239,8 @@ C<parse_*> methods it should be easy to add some new ones.
 
 =head2 Bigger Grammar Changes
 
-Any customization involving bigger changes to the grammar, like adding list comprehension or
-closures or map/reduce type things, would require a bigger rewrite.  Consider starting with
+Any customization involving bigger changes to the grammar, like adding assignments or multi-
+statement blocks or map/reduce, would require a bigger rewrite.  Consider starting with
 a different more powerful parsing system for that.
 
 =head1 SEE ALSO
