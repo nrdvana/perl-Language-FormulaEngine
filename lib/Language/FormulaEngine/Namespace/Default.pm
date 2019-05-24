@@ -57,33 +57,21 @@ These are the methods that implement the infix operators.
 
 =item C<< sum( num1, num2 ... ) >>
 
-(Since V0)
-
 =item C<< negative( num1 ) >>
-
-(Since V0)
 
 =item C<< mul( num1, num2, ... ) >>
 
-(Since V0)
-
 =item C<< div( numerator, denominator ) >>
-
-(Since V0)
 
 =item C<< and( bool1, bool2, ... ) >>
 
 This applies perl-ish boolean semantics to each argument, and returns a numeric 0 or 1.
 No arguments are evaluated after the first false value.
 
-(Since V0)
-
 =item C<< or( bool1, bool2, ... ) >>
 
 This applies perl-ish boolean semantics to each argument, and returns a numeric 0 or 1.
 No arguments are evaluated after the first true value.
-
-(Since V0)
 
 =item C<< not( bool1 ) >>
 
@@ -362,6 +350,10 @@ Like L</round>, but always round up.  See also L</ceiling>.
 
 Like L</round>, but always round down.  See also L</floor>.
 
+=item C<< sin( angle ) >>
+
+Returns ratio of opposite/adjacent for a given angle in radians.
+
 =back
 
 =cut
@@ -592,9 +584,9 @@ sub fn_days {
 	return $end > $start? $n : -$n;
 }
 sub fn_eomonth {
-	my ($start, $end)= @_;
-	$end= 0 unless @_ > 1;
-	_date($start)->clone->add(months => $end+1)->truncate(to => 'month')->subtract(days => 1);
+	my ($start, $m_ofs)= @_;
+	$m_ofs= 0 unless @_ > 1;
+	_date($start)->clone->add(months => $m_ofs+1)->truncate(to => 'month')->subtract(days => 1);
 }
 sub fn_hour {
 	_date($_[0])->hour

@@ -549,25 +549,7 @@ sub Language::FormulaEngine::Parser::Node::Call::function_name { $_[0][0] }
 sub Language::FormulaEngine::Parser::Node::Call::parameters { $_[0][1] }
 sub Language::FormulaEngine::Parser::Node::Call::evaluate {
 	my ($self, $namespace)= @_;
-	my $name= $self->function_name;
-	my $info= $namespace->get_function($name) or die "Unknown function '$name'\n";
-	# If the namespace supplies a special evaluator method, use that
-	if (my $eval= $info->{evaluator}) {
-		return $namespace->$eval($self);
-	}
-	# Else if the namespace supplies a native plain-old-function, convert the parameters
-	# from parse nodes to plain values and then call the function.
-	elsif (my $fn= $info->{native}) {
-		# The function might be a perl builtin, so need to activate the same
-		# warning flags that would be used by the compiled version.
-		use warnings FATAL => 'numeric', 'uninitialized';
-		my @args= map $_->evaluate($namespace), @{ $self->parameters };
-		return $fn->(@args);
-	}
-	# Else the definition of the function is incomplete.
-	else {
-		die "Incomplete function '$name' cannot be evaluated\n";
-	}
+	$namespace->evaluate_call($self);
 }
 
 sub new_call {

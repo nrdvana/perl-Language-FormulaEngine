@@ -2,6 +2,7 @@ package Language::FormulaEngine::Namespace;
 use Moo;
 use Carp;
 use Try::Tiny;
+use Language::FormulaEngine::Error ':all';
 use namespace::clean;
 
 # ABSTRACT: Object holding function and variable names
@@ -38,7 +39,8 @@ Same as L</variables>, but these may be compiled into coderefs.
 =head2 die_on_unknown_value
 
 Controls behavior of L</get_value>.  If false (the default) unknown symbol names will resolve
-as perl C<undef> values.  If true, unknown symbol names will throw an exception.
+as perl C<undef> values.  If true, unknown symbol names will throw an
+L<ErrREF exception|Language::FormulaEngine::Error/ErrREF>.
 
 =cut
 
@@ -144,7 +146,7 @@ sub get_value {
 	exists $self->{variables}{$name}? $self->{variables}{$name}
 	: exists $self->{constants}{$name}? $self->{constants}{$name}
 	: !$self->die_on_unknown_value? undef
-	: die "Unknown variable or constant '$_[1]'\n";
+	: die ErrREF("Unknown variable or constant '$_[1]'");
 }
 
 sub get_function {
@@ -161,6 +163,37 @@ sub get_function {
 		} : 1;
 	};
 	return ref $info? $info : undef;
+}
+
+=head2 evaluate_call
+
+  my $value= $namespace->evaluate_call( $Call_parse_node );
+
+Evaluate a function call, passing it either to a specialized evaluator or performing a more
+generic evaluation of the arguments followed by calling a native perl function.
+
+=cut
+
+sub evaluate_call {
+	my ($self, $call)= @_;
+	my $name= $call->function_name;
+	my $info= $self->get_function($name)
+		or die ErrNAME("Unknown function '$name'");
+	# If the namespace supplies a special evaluator method, use that
+	if (my $eval= $info->{evaluator}) {
+		return $self->$eval($call);
+	}
+	# Else if the namespace supplies a native plain-old-function, convert the parameters
+	# from parse nodes to plain values and then call the function.
+	elsif (my $fn= $info->{native}) {
+		# The function might be a perl builtin, so need to activate the same
+		# warning flags that would be used by the compiled version.
+		use warnings FATAL => 'numeric', 'uninitialized';
+		my @args= map $_->evaluate($self), @{ $call->parameters };
+		return $fn->(@args);
+	}
+	# Else the definition of the function is incomplete.
+	die ErrNAME("Incomplete function '$name' cannot be evaluated");
 }
 
 =head1 FUNCTION LIBRARY
