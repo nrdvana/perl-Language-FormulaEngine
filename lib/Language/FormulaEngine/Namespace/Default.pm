@@ -12,6 +12,9 @@ use DateTime;
 use DateTime::Format::Flexible;
 use namespace::clean;
 
+# ABSTRACT: Default spreadsheet-like set of functions and behavior
+# VERSION
+
 # No official versioned namespace yet, but this code is for when I publish one.
 
 #sub _fake_require {

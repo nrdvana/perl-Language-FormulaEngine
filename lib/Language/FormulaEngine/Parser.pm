@@ -56,6 +56,10 @@ A set (hashref) of all function names encountered during the parse.
 
 A set (hashref) of all non-function symbols encountered.  (variables, constnts, etc.)
 
+=head2 reset
+
+Clear the results of the previous parse, to re-use the object.  Returns C<$self> for chaining.
+
 =cut
 
 has parse_tree   => ( is => 'rw' );
@@ -410,7 +414,7 @@ sub parse_unit_expr {
 			return $self->new_call($id, $args);
 		}
 		else {
-			return $self->new_variable($id);
+			return $self->new_symbol($id);
 		}
 	}
 	
@@ -573,13 +577,13 @@ sub Language::FormulaEngine::Parser::Node::Symbol::evaluate {
 	$namespace->get_value($$self);
 }
 
-sub new_variable  {
+sub new_symbol  {
 	my ($self, $name)= @_;
 	$self->symbols->{$name}++; # record dependency on this variable
 	bless \$name, 'Language::FormulaEngine::Parser::Node::Symbol';
 }
 
-=head3 new_string
+=item new_string
 
   $node= $parser->new_string($string_value);
 
@@ -612,6 +616,8 @@ sub new_number {
 }
 
 =item get_negative
+
+  $negative_node= $parser->get_negative( $node );
 
 Utility method to get the "opposite of" a parse node.  By default, this wraps it with the
 function C<'negative'>, unless it already was that function then it unwraps the parameter.

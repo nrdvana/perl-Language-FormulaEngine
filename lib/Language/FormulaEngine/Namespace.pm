@@ -15,6 +15,7 @@ use namespace::clean;
 =head1 DESCRIPTION
 
 A FormulaEngine Namespace is an object that provides a set of functions and named values.
+It can also affect language semantics through it's implementation of those functions.
 
 The default implementation provides all functions of its own namespace which begin with
 the prefix "fn_" or "eval_", and provides them case-insensitive.  Named values are provided
@@ -79,6 +80,13 @@ sub clone_and_merge {
 	$attrs{constants}= { %{ $self->constants }, %{ $attrs{constants}||{} } };
 	$self->new( %$self, %attrs );
 }
+
+=head2 get_constant
+
+  my $val= $ns->get_constant( $symbolic_name );
+
+Mehod to check for availability of a named constant, before assuming that a name is a variable.
+This never throws an exception; it returns C<undef> if no constant exists by that name.
 
 =head2 get_value
 
@@ -199,8 +207,7 @@ sub evaluate_call {
 =head1 FUNCTION LIBRARY
 
 Theis base Namespace class does not contain any user-visible functions; those are found within
-the versioned sub-classes, such as ::V0, ::V1, etc.
-See L<Language::FormulaEngine::Namespace::Default> for a list of all versioned functions.
+the sub-classes such L<Language::FormulaEngine::Namespace::Default>.
 
 =cut
 

@@ -39,6 +39,15 @@ The other option (the default of C<false>) is to put all the coderef parameters 
 and directly access that hashref, which is faster and avoids needing to create temporary
 namespaces.
 
+=head2 error
+
+After a failed call to C<compile>, this attribute holds the error message.
+
+=head2 code_body
+
+After compilation, this attribute holds the perl source code that was generated prior to being
+wrapped with the coderef boilerplate.
+
 =cut
 
 has namespace => ( is => 'rw', trigger => 1 );
@@ -77,18 +86,30 @@ L<Sub::Util/set_subname> for generated code.
 
 sub compile {
 	my ($self, $parse_tree, $subname)= @_;
-	$self->error(undef);
-	$self->code_body(undef);
 	my $ret;
+	$self->reset;
 	try {
 		$self->code_body($self->perlgen($parse_tree));
 		$ret= $self->generate_coderef_wrapper($self->code_body);
 	}
 	catch {
-		chomp;
+		chomp unless ref $_;
 		$self->error($_);
 	};
 	return $ret;
+}
+
+=head2 reset
+
+Clear any temporary results from the last compilation.  Returns C<$self>.
+
+=cut
+
+sub reset {
+	my $self= shift;
+	$self->error(undef);
+	$self->code_body(undef);
+	$self;
 }
 
 =head2 generate_coderef_wrapper

@@ -4,6 +4,11 @@ use warnings;
 use Exporter 'import';
 our @EXPORT_OK= qw( calc_text_coordinates format_context_string format_context_multiline );
 
+# ABSTRACT: utility methods for parsers
+# VERSION
+
+=head1 EXPORTED FUNCTIONS
+
 =head2 calc_text_coordinates
 
   my ($line, $col)= calc_text_coordinates( $buffer, $pos );
