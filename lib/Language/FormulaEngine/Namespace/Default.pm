@@ -7,6 +7,9 @@ use List::Util ();
 use Math::Trig ();
 use Scalar::Util ();
 use POSIX ();
+use Language::FormulaEngine::Error ':all';
+use DateTime;
+use DateTime::Format::Flexible;
 use namespace::clean;
 
 # No official versioned namespace yet, but this code is for when I publish one.
@@ -442,6 +445,10 @@ Returns C<string> after removing all non-printable characters (defined as C<< [:
 Opposite of L</char>, known as C<ord()> in other languages.  Returns the unicode codepoint
 number of the first character of the string.
 
+=item C<< concat, concatenate( string, ... ) >>
+
+Returns all arguments concatenated as a string
+
 =item C<< find( needle, haystack, from_offset=1 ) >>
 
 Return the character offset of C<needle> from start of C<haystack>, beginning the search at
@@ -452,9 +459,9 @@ from_offset.  All offsets are 1-based.
 Return the number formatted with a fixed number of decimal places.  By default, it gets commas
 added in the USA notation, but this can be disabled.
 
-=item C<< upper( string ) >>
+=item C<< len( string ) >>
 
-Return uppercase version of STRING.
+Return number of unicode characters in STRING.
 
 =item C<< lower( string ) >>
 
@@ -464,9 +471,9 @@ Return lowercase version of STRING.
 
 Same as perl's builtin.
 
-=item C<< concat, concatenate( string, ... ) >>
+=item C<< upper( string ) >>
 
-Returns all arguments concatenated as a string
+Return uppercase version of STRING.
 
 =item C<< textjoin, join( separator, string, ... ) >>
 
@@ -486,7 +493,7 @@ sub fn_clean {
 *fn_upper= *CORE::uc;
 *fn_lower= *CORE::lc;
 *fn_substr= *CORE::substr;
-*fn_length= *CORE::length;
+*fn_len= *CORE::length;
 
 sub fn_concatenate {
 	join '', @_;
@@ -531,11 +538,15 @@ Convert a (year,month,day) triplet into a date.
 Calculate difference bwteen two dates.  Unit can be one of: C<"Y"> (whole years), C<"M"> (whole
 months), C<"D"> (whole days).  Dates can be parsed from any string resembling a date.
 
+=item C<< datevalue( text ) >>
+
+Parse a date, or die trying.
+
 =item C<< day( date ) >>
 
 Returns the day number of a date
 
-=item C<< days( start_date, end_date ) >>
+=item C<< days( end_date, start_date ) >>
 
 Returns number of days difference between start and end date.
 
@@ -551,32 +562,38 @@ Return the hour field of a date.
 
 =cut
 
-sub _date {
-	return $_[0] if ref($_[0])->isa('DateTime');
-	DateTime::Format::Flexible->parse_datetime($_[0]) or die "Not a date: $_[0]\n"
+sub fn_datevalue {
+	my $date= shift;
+	return $date if ref $date && ref($date)->isa('DateTime');
+	try { DateTime::Format::Flexible->parse_datetime($date) }
+	catch { die ErrInval("Not a date: '$date'") };
 }
+BEGIN { *_date= *fn_datevalue; } # for convenience
 sub fn_date {
 	my ($y, $m, $d)= @_;
-	DateTime->new(year => $y, month => $m, day => $d);
+	try { DateTime->new(year => $y, month => $m, day => $d) }
+	catch { die ErrInval($_->message) };
 }
 
 sub fn_datedif {
 	my ($start, $end, $unit)= @_;
 	$unit= uc($unit || '');
-	if ($unit eq 'Y') { return _date($end)->delta_md(_date($start))->in_years }
-	if ($unit eq 'M') { return _date($end)->delta_md(_date($start))->in_months }
-	if ($unit eq 'D') { return _date($end)->delta_days(_date($start))->in_days }
-	die "Unsupported datedif unit '$unit'\n";
+	if ($unit eq 'Y') { return _date($end)->delta_md(_date($start))->in_units('years') }
+	if ($unit eq 'M') { return _date($end)->delta_md(_date($start))->in_units('months') }
+	if ($unit eq 'D') { return _date($end)->delta_days(_date($start))->in_units('days') }
+	die ErrInval "Unsupported datedif unit '$unit'";
 }
 sub fn_day {
 	_date($_[0])->day
 }
 sub fn_days {
-	my ($start, $end)= @_;
-	return _date($end)->delta_days(_date($start))->in_days
+	my ($end, $start)= ( _date($_[0]), _date($_[1]) );
+	my $n= $end->delta_days($start)->in_units('days');
+	return $end > $start? $n : -$n;
 }
 sub fn_eomonth {
 	my ($start, $end)= @_;
+	$end= 0 unless @_ > 1;
 	_date($start)->clone->add(months => $end+1)->truncate(to => 'month')->subtract(days => 1);
 }
 sub fn_hour {

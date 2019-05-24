@@ -1,7 +1,10 @@
 #! /usr/bin/env perl
 use Test2::V0;
 use Language::FormulaEngine;
+use Language::FormulaEngine::Error ':all';
 use Math::Trig;
+use Try::Tiny;
+use DateTime;
 
 my %vals= (
 	v => 1.1,
@@ -45,6 +48,22 @@ my @tests= (
 	],[
 		[ 'code("A")'     => 65 ],
 	],[
+		[ 'date(2019,1,1)' => DateTime->new(year => 2019, month => 1, day => 1) ],
+		[ 'date("x")'      => undef, object { prop blessed => ErrInval } ],
+	],[
+		[ 'datedif("2018-01-10","2019-01-01","m")'   => 11 ],
+#		[ 'datedif("2019-01-10","2018-01-01","m")'   => undef, object { prop blessed => ErrInval } ],
+	],[
+		[ 'day("2019-01-10")' => 10 ],
+		[ 'day("x")'          => undef, object { prop blessed => ErrInval } ],
+	],[
+		[ 'days("2019-01-01", "2019-02-01")' => -31 ],
+		[ 'days("2020-01-01", "2019-01-01")' => 365 ],
+	],[
+		[ 'eomonth("2019-01-01")'         => DateTime->new(year => 2019, month => 1, day => 31) ],
+		[ 'day(eomonth("2019-01-01",1))'  => 28 ],
+		[ 'day(eomonth("2019-01-01",-2))' => 30 ],
+	],[
 		[ 'fact(1)'       => 1 ],
 		[ 'fact(3)'       => 6 ],
 		[ 'fact(0)'       => 1 ],
@@ -60,6 +79,9 @@ my @tests= (
 		[ 'fixed(15,-1)'           => '20' ],
 		[ 'fixed(12345.678,2,0)'   => '12345.68' ],
 		[ 'fixed(12345.678,2,".")' => '12.345,68' ],
+	],[
+		[ 'hour("2019-01-02")'      => 0 ],
+		[ 'hour("2019/07/07 4:32")' => 4 ],
 	],[
 		[ 'IFERROR(2+2, "ERR")'   => 4 ],
 		[ 'IFERROR(2+"a", "ERR")' => 'ERR' ],
@@ -84,10 +106,22 @@ my $engine= Language::FormulaEngine->new();
 for my $fn_group (@tests) {
 	my ($name)= $fn_group->[0][0] =~ /^(\w+)/;
 	subtest $name => sub {
-		is( $engine->evaluate($_->[0], \%vals), $_->[1], 'interpret '.$_->[0] )
-			for @$fn_group;
-		is( $engine->compile($_->[0])->(\%vals), $_->[1], 'compile '.$_->[0] )
-			for @$fn_group;
+		for (@$fn_group) {
+			my ($code, $val, $err)= @$_;
+			my ($eval_val, $eval_err, $compile_val, $compile_err);
+			try {; $eval_val= $engine->evaluate($code, \%vals); } catch {; $eval_err= $_; };
+			try {; $compile_val= $engine->compile($code)->(\%vals); } catch {; $compile_err= $_; };
+			if (!defined $err) {
+				is( $eval_val, $val, 'interpret '.$code );
+				diag $eval_err if defined $eval_err;
+				is( $compile_val, $val, 'compile '.$code );
+				diag $compile_err if defined $compile_err;
+			}
+			else {
+				is( $eval_err, $err, 'interpret '.$code );
+				is( $compile_err, $err, 'compile '.$code );
+			}
+		}
 	};
 };
 
