@@ -12,7 +12,7 @@ BEGIN {
 	}
 }
 use Exporter 'import';
-our @EXPORT_OK= @subclasses;
+our @EXPORT_OK= ( @subclasses, qw( auto_wrap_error ) );
 our %EXPORT_TAGS= ( all => \@EXPORT_OK );
 
 # ABSTRACT: Exception objects for formula functions
@@ -28,6 +28,30 @@ anything that uses that value needs to generate a similar error.  That would req
 argument checking and prevent using native Perl operations, but by returning an error wrapped
 in a trap, any perl operation that attempts to use the trap will instead throw the exception
 object.
+
+=head1 ATTRIBUTES
+
+All error objects have:
+
+=head2 message
+
+A text description of the error
+
+=head1 METHODS
+
+=head2 mine
+
+  return $error->mine;
+
+This wraps the error in a "landmine".  Any perl code that attempts to operate on the value of
+the object will instead die with C<$error>.  Call C<disarm> on the mine to return the original
+C<$error> reference.
+
+=head1 EXPORTABLE FUNCTIONS
+
+Each of the sub-classes of error has a constructor function which you can export from this
+module.  You can also take a perl-generated exception and automatically wrap it with an
+appropriate Error object using L</auto_wrap_error>.
 
 =head2 ErrInval
 
@@ -52,6 +76,13 @@ was given something it couldn't convert.
 The formula uses an unknown function name.  This is thrown during compilation, or during
 evaluation if the compile step is omitted.
 
+=head2 auto_wrap_error
+
+  my $err_obj= auto_wrap_error( $perl_error_text );
+
+Look at the perl error to see if it is a known type of error, and wrap it with the appropriate
+type of error object.
+
 =cut
 
 has message => ( is => 'rw', required => 1 );
@@ -68,6 +99,32 @@ sub BUILDARGS {
 	return { @_ };
 }
 
+our %err_patterns= (
+	ErrNA    => qr/uninitialized|undefined/,
+	ErrNUM   => qr/numeric/,
+);
+sub auto_wrap_error {
+	# allow to be called as package method, or not
+	shift if @_ && !ref $_[0] && $_[0]->isa(__PACKAGE__);
+	my $msg= shift;
+	# return things which are already Error objects (or mines)
+	if (ref $msg) {
+		return $msg->disarm if ref($msg)->can('disarm');
+		return $msg if ref($msg)->can('message');
+	}
+	# Match message against patterns that Perl might have generated
+	if (defined $msg) {
+		$msg =~ s/ at \(eval.*//; # isn't useful
+		for (keys %err_patterns) {
+			return (__PACKAGE__.'::'.$_)->new(message => $msg)
+				if $msg =~ $err_patterns{$_};
+		}
+	} else {
+		$msg= '<undef>';
+	}
+	return __PACKAGE__->new(message => $msg);
+}
+
 sub _fake_inc {
 	(my $pkg= caller) =~ s,::,/,g;
 	$INC{$pkg.'.pm'}= $INC{'Language/FormulaEngine/Error.pm'};
@@ -75,7 +132,13 @@ sub _fake_inc {
 
 package Language::FormulaEngine::ErrorMine;
 Language::FormulaEngine::Error::_fake_inc();
+use overload # SOMEONE SET US UP THE BOMB!
+	'0+' => sub { die ${$_[0]} },
+	'""' => sub { die ${$_[0]} },
+	bool => sub { die ${$_[0]} };
 
+sub new { bless $_[0], shift }
+sub disarm { ${$_[0]} }
 
 package Language::FormulaEngine::Error::ErrInval;
 Language::FormulaEngine::Error::_fake_inc();

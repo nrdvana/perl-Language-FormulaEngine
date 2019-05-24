@@ -1,5 +1,5 @@
 #! /usr/bin/env perl
-use Test2::V0 qw( ok is note diag object prop call done_testing );
+use Test2::V0 qw( ok is note diag object prop call match done_testing );
 use Data::Dumper;
 use Try::Tiny;
 use Language::FormulaEngine;
@@ -34,6 +34,11 @@ my @tests= (
 		object {
 			prop blessed => 'Language::FormulaEngine::Error::ErrNUM';
 			call message => $msg;
+		},
+	],
+	[ 'auto_wrap_error(do { eval { my $x; $$x } || $@ })',
+		object {
+			prop blessed => 'Language::FormulaEngine::Error::ErrNA';
 		},
 	],
 );
