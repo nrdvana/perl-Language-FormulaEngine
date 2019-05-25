@@ -1,6 +1,5 @@
 #! /usr/bin/env perl
 use Test2::V0;
-use Data::Dumper;
 use Try::Tiny;
 use Language::FormulaEngine;
 

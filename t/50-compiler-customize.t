@@ -1,15 +1,11 @@
 #! /usr/bin/env perl
-use strict;
-use warnings;
 use Test2::V0;
-use Data::Dumper;
-use Log::Any::Adapter 'TAP';
-use Log::Any '$log';
 use Try::Tiny;
 use Language::FormulaEngine;
 
 my $vars= { baz => 42 };
-package MyContext {
+{
+	package MyContext;
 	use Moo;
 	extends 'Language::FormulaEngine::Namespace';
 	sub fn_customfunc { return "arguments are ".join(', ', @_)."\n"; }

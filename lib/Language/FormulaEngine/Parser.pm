@@ -3,7 +3,6 @@ use Moo;
 use Carp;
 use Try::Tiny;
 use List::Util qw( min max );
-use Log::Any '$log';
 use Language::FormulaEngine::Parser::ContextUtil
 	qw( calc_text_coordinates format_context_string format_context_multiline );
 use namespace::clean;

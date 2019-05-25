@@ -1,13 +1,6 @@
 #! /usr/bin/env perl
-use strict;
-use warnings;
-use Test::More;
-use Data::Dumper;
-use Log::Any::Adapter 'TAP';
-use Log::Any '$log';
+use Test2::V0 -target => 'Language::FormulaEngine::Parser';
 use Try::Tiny;
-
-use_ok( 'Language::FormulaEngine::Parser' ) or BAIL_OUT;
 
 my %_escape_mapping= ("\0" => '\0', "\n" => '\n', "\r" => '\r', "\t" => '\t', "\f" => '\f', "\b" => '\b', "\a" => '\a', "\e" => '\e', "\\" => '\\' );
 sub escape_char { exists $_escape_mapping{$_[0]}? $_escape_mapping{$_[0]} : sprintf((ord $_[0] <= 0xFF)? "\\x%02X" : "\\x{%X}", ord $_[0]); }
@@ -53,7 +46,7 @@ sub test_parser {
 	for (@tests) {
 		my ($str, $canonical, $err_regex)= @$_;
 		subtest '"'.escape_str($str).'"' => sub {
-			my $parser= Language::FormulaEngine::Parser->new;
+			my $parser= CLASS->new;
 			$parser->parse($str);
 			
 			if (defined $canonical) {

@@ -1,13 +1,6 @@
 #! /usr/bin/env perl
-use strict;
-use warnings;
-use Test::More;
-use Data::Dumper;
-use Log::Any::Adapter 'TAP';
-use Log::Any '$log';
+use Test2::V0 -target => 'Language::FormulaEngine::Parser';
 use Try::Tiny;
-
-use_ok( 'Language::FormulaEngine::Parser' ) or BAIL_OUT;
 
 # capture error message of code that should die
 sub error_of(&) { my $sub= shift; try { $sub->(); 'No Exception Thrown' } catch { $_ } }
@@ -81,7 +74,7 @@ sub test_scanner {
 	for (@tests) {
 		my ($str, @tokens)= @$_;
 		subtest '"'.str_escape($str).'"' => sub {
-			my $p= new_ok( 'Language::FormulaEngine::Parser', [], 'new parser' );
+			my $p= CLASS->new();
 			$p->{input}= $str;
 			$p->next_token;
 			my $i= 1;
