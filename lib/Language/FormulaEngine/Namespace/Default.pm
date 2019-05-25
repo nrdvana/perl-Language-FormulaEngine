@@ -7,6 +7,8 @@ use List::Util ();
 use Math::Trig ();
 use Scalar::Util ();
 use POSIX ();
+# POSIX::round isn't available everywhere
+BEGIN { eval 'use POSIX "round"; 1;' or eval 'sub round { sprintf "%.*f", $_[1]||0, $_[0] }' }
 use Language::FormulaEngine::Error ':all';
 use DateTime;
 use DateTime::Format::Flexible;
@@ -400,7 +402,7 @@ sub fn_fact {
 sub fn_round {
 	my ($num, $digits)= @_;
 	my $scale= 0.1 ** ($_[1] || 0);
-	return POSIX::round($num / $scale) * $scale;
+	return round($num / $scale) * $scale;
 }
 
 our $epsilon= 5e-14; # fudge factor for avoiding floating point rounding errors
@@ -594,5 +596,31 @@ sub fn_eomonth {
 sub fn_hour {
 	_date($_[0])->hour
 }
+
+# Perl older than 5.12 can't actually reference the functions in CORE:: namespace.
+# For example, perl -e 'my $sub= sub { CORE::ord(shift) }; print $sub->("A")' works but
+# perl -e 'my $sub= sub { &CORE::ord }; print $sub->("A")' does not.  Neither does
+# perl -e 'CORE->can("ord")->("A")', nor does *fn_foo= *CORE::foo used above.
+# I could of course just wrap each core function with a function defined in this
+# package, but it would be a needless performance hit for modern perl, and clutter
+# the code above.
+if ($] lt '5.012') {
+	require Sub::Util;
+	my $stash= \%Language::FormulaEngine::Namespace::Default::;
+	for my $fn (grep /^fn_/, keys %$stash) {
+		my $symname= "$stash->{$fn}";
+		next unless $symname =~ s/^\*CORE/CORE/;
+		#print "# Stash $fn is $symname\n";
+		# prototypes make this annoying
+		my $code= $symname eq 'CORE::substr'? "sub { substr(shift, \@_) }"
+			: $symname =~ /^CORE::(abs|cos|exp|sin|chr|ord|uc|lc|length)$/? "sub { $symname(\$_[0]) }"
+			: "sub { $symname(\@_) }";
+		my $sub= eval $code or die "$@";
+		no strict 'refs'; no warnings 'redefine';
+		# The name of the sub needs to remain as CORE::foo else test cases will fail
+		*$fn= Sub::Util::set_subname($symname, $sub);
+	}
+}
+
 
 1;
