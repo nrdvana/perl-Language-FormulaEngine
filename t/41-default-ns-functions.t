@@ -8,7 +8,12 @@ use DateTime;
 
 my %vals= (
 	v => 1.1,
+	mon1 => DateTime->new(year => 2019, month => 4),
+	sun7 => DateTime->new(year => 2019, month => 4, day => 7 ),
 );
+my $now= DateTime->now;
+no warnings 'redefine';
+local *DateTime::now= sub { $now->clone };
 my @tests= (
 	[
 		# No need to write extensive tests for these as they just pass-through to Perl
@@ -91,6 +96,23 @@ my @tests= (
 		[ 'IFS(0+1 > 1, 3, 1, 4)'    => 4 ],
 		[ 'IFERROR(IFS(0, 1), 9)'    => 9 ],
 	],[
+		[ 'minute("2019-01-01 4:55")' => 55 ],
+	],[
+		[ 'mod(5,3)' => 2 ],
+		[ 'mod(5,-3)' => -1 ],
+		[ 'mod(-5,3)' => 1 ],
+		[ 'mod(-5,-3)' => -2 ],
+	],[
+		[ 'month("2019-06-12 4:55")' => 6 ],
+	],[
+		[ 'na()' => undef, object { prop blessed => ErrNA; } ],
+	],[
+		[ 'now()' => $now ],
+	],[
+		[ 'pi()' => Math::Trig::pi() ],
+	],[
+		[ 'power(2,8)' => 256 ],
+	],[
 		[ 'roundup(v * 2)'    => '3' ],
 		[ 'roundup(v * 2, 0)' => '3' ],
 		[ 'roundup(v * 2, 1)' => '2.2' ],
@@ -100,6 +122,42 @@ my @tests= (
 		[ 'rounddown(v * 2, 0)' => '2' ],
 		[ 'rounddown(v * 2, 1)' => '2.2' ],
 		[ 'rounddown(v * 2, 2)' => '2.2' ],
+	],[
+		[ 'second("2019-01-02 03:04:05")' => 5 ],
+	],[
+		[ 'trim(" ")'                 => '' ],
+		[ 'trim("x")'                 => 'x' ],
+		[ 'trim(" x ")'               => 'x' ],
+		[ 'trim(" x y ")'             => 'x y' ],
+		[ qq{trim(" x y \x{00A0} z")} => 'x y z' ],
+		[ qq{trim("x\t\r\n")}         => 'x' ],
+	],[
+		[ 'today()' => DateTime->now->clone->truncate(to => 'day') ],
+	],[
+		[ 'weekday(mon1)'     => 2 ],
+		[ 'weekday(sun7)'     => 1 ],
+		[ 'weekday(mon1,  1)' => 2 ],
+		[ 'weekday(sun7,  1)' => 1 ],
+		[ 'weekday(mon1,  2)' => 1 ],
+		[ 'weekday(sun7,  2)' => 7 ],
+		[ 'weekday(mon1,  3)' => 0 ],
+		[ 'weekday(sun7,  3)' => 6 ],
+		[ 'weekday(mon1, 11)' => 1 ],
+		[ 'weekday(sun7, 11)' => 7 ],
+		[ 'weekday(mon1, 12)' => 7 ],
+		[ 'weekday(sun7, 12)' => 6 ],
+		[ 'weekday(mon1, 13)' => 6 ],
+		[ 'weekday(sun7, 13)' => 5 ],
+		[ 'weekday(mon1, 14)' => 5 ],
+		[ 'weekday(sun7, 14)' => 4 ],
+		[ 'weekday(mon1, 15)' => 4 ],
+		[ 'weekday(sun7, 15)' => 3 ],
+		[ 'weekday(mon1, 16)' => 3 ],
+		[ 'weekday(sun7, 16)' => 2 ],
+		[ 'weekday(mon1, 17)' => 2 ],
+		[ 'weekday(sun7, 17)' => 1 ],
+	],[
+		[ 'year("2011-03-04 05:06:07")' => 2011 ],
 	]
 );
 my $engine= Language::FormulaEngine->new();

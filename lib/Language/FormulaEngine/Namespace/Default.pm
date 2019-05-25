@@ -211,6 +211,10 @@ A simplified sequence of IF functions.  If C<condition1> is true, it returns C<v
 C<condition2> is true it returns C<value2>, and so on.  If no condition is true it dies.  (use
 a final true condition and value to provide a default)
 
+=item C<< na() >>
+
+Throw an NA exception.
+
 =back
 
 =cut
@@ -271,6 +275,10 @@ sub perlgen_ifs {
 	}
 	$expr .= 'die "IFS() had no true conditions\n")';
 	return $expr;
+}
+
+sub fn_na {
+	die ErrNA("NA");
 }
 
 =head2 Math Functions
@@ -339,6 +347,38 @@ Compute factorial of C<n>.  (C<< 1 * 2 * 3 * ... n >>)
 Round a number down to the previous multiple of C<step>.  If step is negative, this rounds
 toward zero in the positive direction.
 
+=item C<< max( number, ... ) >>
+
+Return largest value in list
+
+=item C<< min( number, ... ) >>
+
+Return smallest value in list
+
+=item C<< mod( number, modulo ) >>
+
+Returns true modulous of a number.  This uses Perl's (and math's) definition.  For the Excel-
+compatible MOD function, see C<remainder>.
+
+=item C<< pi() >>
+
+Value of π
+
+=item C<< radians( angle_in_degrees ) >>
+
+Convert degrees to radians.
+
+=item C<< rand( range=1 ) >>
+
+Returns pseudo-random value greater or equal to 0 and less than C<range>.  This uses perl's
+(C's) built-in C<< rand() >> function which is likely not as good as the generators used by
+spreadsheet programs, but I didn't want to add a hefty dependency.
+
+=item C<< remainder( number, divisor ) >>
+
+Return the number after subtracting the biggest multiple of divisor that can be removed from it.
+The remainder's sign will be the same as the sign of C<divisor> (unless remainder is zero).
+
 =item C<< round( number, digits=0 ) >>
 
 Round NUMBER to DIGITS decimal places of precision.  Uses the IEEE
@@ -355,9 +395,21 @@ Like L</round>, but always round up.  See also L</ceiling>.
 
 Like L</round>, but always round down.  See also L</floor>.
 
+=item C<< sign( value ) >>
+
+Return 1, 0, or -1 depending on the sign of C<value>.
+
 =item C<< sin( angle ) >>
 
 Returns ratio of opposite/adjacent for a given angle in radians.
+
+=item C<< sqrt( number ) >>
+
+Return square root of a number.
+
+=item C<< tan( angle ) >>
+
+Return ratio of opposite/adjacent for an angle.
 
 =back
 
@@ -396,9 +448,20 @@ sub fn_base {
 sub fn_fact {
 	my $n= int($_[0]);
 	return 1 unless $n;
-	$n > 0 or die "Can't compute factorial of negative number '$n'";
+	$n > 0 or die ErrNUM("Can't compute factorial of negative number '$n'");
 	List::Util::product(1 .. $n);
 }
+
+*fn_min= *List::Util::min;
+*fn_max= *List::Util::max;
+sub fn_mod {
+	my ($num, $modulo)= @_;
+	$modulo+0 or die ErrNUM("MOD($num, $modulo): can't claculate modulus-0");
+	$num % $modulo;
+}
+
+*fn_pi= *Math::Trig::pi;
+
 sub fn_round {
 	my ($num, $digits)= @_;
 	my $scale= 0.1 ** ($_[1] || 0);
@@ -411,7 +474,6 @@ sub fn_ceiling {
 	$step= 1 unless defined $step;
 	return POSIX::ceil($num / $step - $epsilon) * $step;
 }
-
 sub fn_floor {
 	my ($num, $step)= @_;
 	$step= 1 unless defined $step;
@@ -423,7 +485,16 @@ sub fn_roundup {
 sub fn_rounddown {
 	fn_floor($_[0], 0.1 ** ($_[1] || 0));
 }
+
+sub fn_power {
+	@_ == 2 or die ErrInval("POWER() takes 2 arguments");
+	return $_[0] ** $_[1];
+}
+
+*fn_rand= *CORE::rand;
 *fn_sin= *CORE::sin;
+*fn_sqrt= *CORE::sqrt;
+*fn_tan= *Math::Trig::tan;
 
 =head2 String Functions
 
@@ -464,9 +535,18 @@ Return number of unicode characters in STRING.
 
 Return lowercase version of STRING.
 
+=item C<< replace( string, offset, length, new_text ) >>
+
+Replace text in C<string> with C<new_text>, overwriting C<length> characters from C<offset>.
+
 =item C<< substr( string, offset, length=max ) >>
 
 Same as perl's builtin.
+
+=item C<< trim( string ) >>
+
+Remove all leading and trailing whitespace and replace runs of whitespace with a single space
+character.
 
 =item C<< upper( string ) >>
 
@@ -489,6 +569,14 @@ sub fn_clean {
 *fn_code= *CORE::ord;
 *fn_upper= *CORE::uc;
 *fn_lower= *CORE::lc;
+
+sub fn_replace {
+	@_ == 4 or die ErrInval("REPLACE() takes 4 arguments");
+	my ($text, $ofs, $n, $newtext)= @_;
+	substr($text, $ofs, $n)= $newtext;
+	return $text;
+}
+
 *fn_substr= *CORE::substr;
 *fn_len= *CORE::length;
 
@@ -516,6 +604,14 @@ sub fn_fixed {
 		substr($number, 0, $places > 0? -($places+1) : length $number)= reverse $tmp;
 	}
 	return $number;
+}
+
+sub fn_trim {
+	my $str= shift;
+	$str =~ s/\p{Space}+/ /g;
+	$str =~ s/^ //;
+	$str =~ s/ $//;
+	$str;
 }
 
 =head2 DateTime Functions
@@ -554,6 +650,18 @@ Calculate the date of End-Of-Month at some offset from the start date.
 =item C<< hour( date ) >>
 
 Return the hour field of a date.
+
+=item C<< minute( date ) >>
+
+Return minute field of a date.
+
+=item C<< month( date ) >>
+
+Return month field of a date.
+
+=item C<< year( date ) >>
+
+Return the year field of a date.
 
 =back
 
@@ -595,6 +703,33 @@ sub fn_eomonth {
 }
 sub fn_hour {
 	_date($_[0])->hour
+}
+sub fn_minute {
+	_date($_[0])->minute
+}
+sub fn_month {
+	_date($_[0])->month
+}
+sub fn_now {
+	DateTime->now;
+}
+sub fn_second {
+	_date($_[0])->second
+}
+sub fn_today {
+	DateTime->now->truncate(to => 'day');
+}
+sub fn_weekday {
+	my ($date, $standard)= @_;
+	my $day_mon1= _date($date)->day_of_week;
+	return $day_mon1 % 7 + 1 if !$standard or $standard == 1;
+	return $day_mon1 if $standard == 2 or $standard == 11;
+	return $day_mon1-1 if $standard == 3;
+	return ($day_mon1 - ($standard - 10)) % 7 + 1 if $standard >= 12 && $standard <= 17;
+	die ErrInval("No known weekday standard '$standard'");
+}
+sub fn_year {
+	_date($_[0])->year
 }
 
 # Perl older than 5.12 can't actually reference the functions in CORE:: namespace.

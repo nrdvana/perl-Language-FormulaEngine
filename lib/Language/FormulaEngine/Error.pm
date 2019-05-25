@@ -130,6 +130,15 @@ sub _fake_inc {
 	$INC{$pkg.'.pm'}= $INC{'Language/FormulaEngine/Error.pm'};
 }
 
+sub _stringify {
+	my $self= shift;
+	my $cls= ref $self;
+	$cls =~ s/^Language::FormulaEngine::Error:://;
+	$cls . ': ' . $self->message;
+}
+
+use overload '""' => \&_stringify;
+
 package Language::FormulaEngine::ErrorMine;
 Language::FormulaEngine::Error::_fake_inc();
 use overload # SOMEONE SET US UP THE BOMB!
