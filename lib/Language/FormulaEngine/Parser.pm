@@ -116,7 +116,7 @@ sub deparse {
 	return _str_escape($node->string_value) if $node->can('string_value');
 	return $node->number_value if $node->can('number_value');
 	return $node->symbol_name if $node->can('symbol_name');
-	return $node->function_name . '( ' .join(', ', map $self->deparse($_), @{$node->parameters}). ' )'
+	return $node->function_name . (@{$node->parameters}? '( ' .join(', ', map $self->deparse($_), @{$node->parameters}). ' )' : '()')
 		if $node->can('function_name');
 	croak "Don't know how to deparse node type ".ref($node);
 }
@@ -388,8 +388,6 @@ sub parse_unit_expr {
 		my $args= $self->parse_list;
 		die "Expected ')' near ".$self->token_context."\n"
 			if $self->{token_type} ne ')';
-		die "Expected expression before ')' near ".$self->token_context."\n"
-			unless @$args;
 		$self->next_token;
 		return @$args > 1? $self->new_call('list', $args) : $args->[0];
 	}
@@ -406,10 +404,10 @@ sub parse_unit_expr {
 		my $id= $self->consume_token;
 		if ($self->{token_type} eq '(') {
 			$self->next_token;
-			my $args= $self->parse_list;
+			my $args= $self->{token_type} eq ')'? [] : $self->parse_list;
 			die "Expected ')' near ".$self->token_context."\n"
 				if $self->{token_type} ne ')';
-			$self->consume_token;
+			$self->next_token;
 			return $self->new_call($id, $args);
 		}
 		else {
@@ -428,7 +426,7 @@ sub parse_list {
 	my $self= shift;
 	my @args= $self->parse_expr;
 	while ($self->{token_type} eq ',') {
-		$self->consume_token;
+		$self->next_token;
 		push @args, $self->parse_expr;
 	}
 	return \@args;
@@ -480,6 +478,7 @@ BEGIN {
 		sort { length($b) <=> length($a) } # longest keywords get priority
 		keys %keywords;
 	
+	# Evaling this just to make sure the regex gets compiled one single time
 	my $scan_token= eval q%
 		sub {
 			my $self= shift;

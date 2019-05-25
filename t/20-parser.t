@@ -1,6 +1,7 @@
 #! /usr/bin/env perl
 use Test2::V0 -target => 'Language::FormulaEngine::Parser';
 use Try::Tiny;
+use Data::Dumper;
 
 my %_escape_mapping= ("\0" => '\0', "\n" => '\n', "\r" => '\r', "\t" => '\t', "\f" => '\f', "\b" => '\b', "\a" => '\a', "\e" => '\e', "\\" => '\\' );
 sub escape_char { exists $_escape_mapping{$_[0]}? $_escape_mapping{$_[0]} : sprintf((ord $_[0] <= 0xFF)? "\\x%02X" : "\\x{%X}", ord $_[0]); }
@@ -25,6 +26,9 @@ sub test_parser {
 		],
 		[ 'foo((((34))))',
 			"foo( 34 )"
+		],
+		[ 'foo()',
+			"foo()"
 		],
 		[ 'foo(12,34)(54,32)',
 			undef, qr/unexpected.*\(/i
@@ -52,12 +56,12 @@ sub test_parser {
 			if (defined $canonical) {
 				is( $parser->error, undef, 'no error' );
 				is( $parser->parse_tree && $parser->deparse, $canonical, 'correct interpretation' )
-					or diag explain $parser;
+					or diag Dumper($parser);
 			}
 			else {
 				is( $parser->parse_tree, undef, 'parse failed' );
 				like( $parser->error, $err_regex, 'correct error message' )
-					or diag explain $parser;
+					or diag Dumper($parser);
 			}
 			done_testing;
 		};
