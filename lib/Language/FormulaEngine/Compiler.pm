@@ -192,7 +192,7 @@ sub _get_perl_generator {
 	my $fqn= subname($info->{native}) || '';
 	# For security, make reasonably sure that perl will parse the subname as a function name.
 	# This regex is more restrictive than perl's actual allowed identifier names.
-	$fqn =~ /^[A-Za-z_][A-Za-z0-9_]*::([A-Za-z0-9_]+::)*\w+$/u
+	$fqn =~ /^[A-Za-z_][A-Za-z0-9_]*::([A-Za-z0-9_]+::)*\p{Word}+$/
 		or die "Can't compile function '$name'; native function does not have a valid fully qualified name '$fqn'\n";
 	# Create a generator that injects this function name
 	return sub {
