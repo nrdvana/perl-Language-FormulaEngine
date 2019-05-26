@@ -447,6 +447,15 @@ and optional exponent, ending at either the end of the input or a non-alphanumer
 A single-quoted or double-quoted string, treating a double occurrence of the quote
 character to mean a literal quote character.  ("Pascal style")
 
+  'apostrophes are''nt hard'
+
+There are no escape sequences though, so to get control characters or awkward unicode
+into a string you need something like:
+
+  concat("smile ",char(0x263A))
+
+which depends on those functions being available in the namespace.
+
 =item Keywords...
 
 Keywords include the "word" tokens like 'OR', but also every text literal seen in a parse rule
@@ -491,6 +500,10 @@ BEGIN {
 			# Check for numbers
 			if ($self->{input} =~ /\G([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)\b/gc) {
 				return Number => $1;
+			}
+			# or hex numbers
+			if ($self->{input} =~ /\G0x([0-9A-Fa-f]+)/gc) {
+				return Number => hex($1);
 			}
 			
 			# Check for any keyword, and convert the type to the canonical (lowercase) name.
