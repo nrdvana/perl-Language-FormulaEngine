@@ -251,7 +251,7 @@ sub nodeval_iferror {
 sub perlgen_iferror {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
-	return '(do { my $x; eval { $x=('.$arg_code[0].'); 1 }? $x : ('.$arg_code[1].') })';
+	return '(do { local $@; my $x; eval { $x=('.$arg_code[0].'); 1 }? $x : ('.$arg_code[1].') })';
 }
 
 sub nodeval_ifs {
