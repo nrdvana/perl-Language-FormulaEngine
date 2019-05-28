@@ -499,7 +499,7 @@ BEGIN {
 			
 			# Check for numbers
 			if ($self->{input} =~ /\G([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)\b/gc) {
-				return Number => $1;
+				return Number => $1+0;
 			}
 			# or hex numbers
 			if ($self->{input} =~ /\G0x([0-9A-Fa-f]+)/gc) {
