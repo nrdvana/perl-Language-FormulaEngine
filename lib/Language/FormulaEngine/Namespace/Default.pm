@@ -677,7 +677,7 @@ BEGIN { *_date= *fn_datevalue; } # for convenience
 sub fn_date {
 	my ($y, $m, $d)= @_;
 	try { DateTime->new(year => $y, month => $m, day => $d) }
-	catch { die ErrInval($_->message) };
+	catch { die ErrInval(ref $_ && $_->can("message")? $_->message : "$_") };
 }
 
 sub fn_datedif {
