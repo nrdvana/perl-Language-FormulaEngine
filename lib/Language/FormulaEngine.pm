@@ -63,7 +63,7 @@ and shouldn't have side effects on the data structures you expose to the user.
 The optional L</compile> method does use C<eval> though, so you should do an audit for
 yourself if you plan to use it where security is a concern.
 
-=head2 Features:
+B<Features:>
 
 =over
 

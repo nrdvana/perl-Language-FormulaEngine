@@ -40,7 +40,7 @@ contain useful diagnostic information.
 
 =head2 parse_tree
 
-This holds the generated parse tree, or C<undef> if the parse failed.  See L</"PARSE NODES">.
+This holds the generated parse tree, or C<undef> if the parse failed.  See L</"Parse Nodes">.
 
 =head2 error
 
@@ -533,21 +533,23 @@ BEGIN {
 =head2 Parse Nodes
 
 The parse tree takes a minimalist approach to node classification.  In this default
-implementation, numbers are represented as plain perl scalars, strings and symbolic references
-are represented as blessed scalar refs, and function calls are represented as blessed Lisp-style
-arrayrefs.
+implementation, number values, string values, and symbolic references have just a simple
+wrapper around the value, and function calls are just a pair of function name and list of
+arguments.  All language operators are represented as function calls.
 
 A blessed node only needs to support one method: C<< ->evaluate($namespace) >>.
 
 The class name of the blessed nodes should be ignored.  A function is anything which
-C<< can("function_name") >>, a string is anything which C<< can("string_value") >> and a
-symbolic reference is anything which C<< can("symbolic_name") >>.  Also, the blessed strings
-automatically stringify to their value, behaving almost like plain perl scalars.
+C<< can("function_name") >>, a string is anything which C<< can("string_value") >>, a number is
+anything which C<< can("number_value") >> and a symbolic reference is anything which
+C<< can("symbolic_name") >>.
 
 Subclasses of Parser should implemnt new node types as needed.  You probable also need to
 update L</deparse>.
 
-The parser rules create nodes by methods on the Parser class, for easy subclassing.
+The parser rules (C<parse_X_expr> methods) create nodes by the following methods on the Parser
+class, so that you can easily subclass C<Parser> and override which class of node is getting
+created.
 
 =over
 
