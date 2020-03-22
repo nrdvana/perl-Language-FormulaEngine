@@ -96,12 +96,6 @@ sub reset {
 	$self;
 }
 
-sub _str_escape {
-	my $str= shift;
-	$str =~ s/'/''/g;
-	"'$str'";
-}
-
 =head2 deparse
 
   my $formula_text= $parser->deparse($tree);
@@ -112,13 +106,8 @@ Return a canonical formula text for the parse tree, or a parse tree that you sup
 
 sub deparse {
 	my ($self, $node)= @_;
-	$node ||= $self->parse_tree;
-	return _str_escape($node->string_value) if $node->can('string_value');
-	return $node->number_value if $node->can('number_value');
-	return $node->symbol_name if $node->can('symbol_name');
-	return $node->function_name . (@{$node->parameters}? '( ' .join(', ', map $self->deparse($_), @{$node->parameters}). ' )' : '()')
-		if $node->can('function_name');
-	croak "Don't know how to deparse node type ".ref($node);
+	$node= $self->parse_tree unless @_ > 1;
+	$node->deparse($self);
 }
 
 =head1 EXTENSIBLE API
@@ -568,6 +557,13 @@ sub Language::FormulaEngine::Parser::Node::Call::evaluate {
 	my ($self, $namespace)= @_;
 	$namespace->evaluate_call($self);
 }
+sub Language::FormulaEngine::Parser::Node::Call::deparse {
+	my ($node, $parser)= @_;
+	return $node->function_name . (
+		!@{$node->parameters}? '()'
+		: '( ' .join(', ', map $parser->deparse($_), @{$node->parameters}). ' )'
+	)
+}
 
 sub new_call {
 	my ($self, $fn, $params)= @_;
@@ -589,6 +585,9 @@ sub Language::FormulaEngine::Parser::Node::Symbol::evaluate {
 	my ($self, $namespace)= @_;
 	$namespace->get_value($$self);
 }
+sub Language::FormulaEngine::Parser::Node::Symbol::deparse {
+	shift->symbol_name;
+}
 
 sub new_symbol  {
 	my ($self, $name)= @_;
@@ -606,6 +605,14 @@ A string literal.  It has an attribute C<string_value> holding the raw value.
 
 sub Language::FormulaEngine::Parser::Node::String::string_value { ${$_[0]} }
 sub Language::FormulaEngine::Parser::Node::String::evaluate { ${$_[0]} }
+sub _str_escape {
+	my $str= shift;
+	$str =~ s/'/''/g;
+	"'$str'";
+}
+sub Language::FormulaEngine::Parser::Node::String::deparse {
+	_str_escape(shift->string_value);
+}
 
 sub new_string {
 	my ($self, $text)= @_;
@@ -622,6 +629,7 @@ A numeric constant.  It has an attribute C<number_value> holding the raw value.
 
 sub Language::FormulaEngine::Parser::Node::Number::number_value { ${$_[0]} }
 sub Language::FormulaEngine::Parser::Node::Number::evaluate { ${$_[0]} }
+sub Language::FormulaEngine::Parser::Node::Number::deparse { shift->number_value }
 
 sub new_number {
 	my $value= $_[1]+0;
