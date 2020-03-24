@@ -151,11 +151,13 @@ sub _coerce_instance {
 	my ($thing, $req_method, $default_class)= @_;
 	return $thing if ref $thing and ref($thing)->can($req_method);
 	
-	my $class= !(defined $thing || ref $thing)? $default_class
+	my $class= !defined $thing? $default_class
+		: ref $thing eq 'HASH'? $thing->{CLASS} || $default_class
+		: ref $thing? $default_class
 		: ($req_method eq 'get_function' && $thing =~ /^[0-9]+$/)? "Language::FormulaEngine::Namespace::Default::V$thing"
 		: $thing;
 	require_module($class)
-		unless $class->can('new');
+		unless $class->can($req_method);
 	
 	my @args= !ref $thing? ()
 		: (ref $thing eq 'ARRAY')? @$thing

@@ -103,7 +103,7 @@ sub perlgen_sum {
 sub jsgen_sum {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
-	return '( '.join(' + ', @arg_code).' )';
+	return '('.join('+', @arg_code).')';
 }
 
 sub fn_negative {
@@ -132,7 +132,7 @@ sub perlgen_mul {
 sub jsgen_mul {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
-	return '( '.join(' * ', @arg_code).' )';
+	return '('.join('*', @arg_code).')';
 }
 
 sub fn_div {
@@ -148,7 +148,7 @@ sub perlgen_div {
 sub jsgen_div {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
-	return '( '.join(' / ', @arg_code).' )';
+	return '('.join('/', @arg_code).')';
 }
 
 sub nodeval_and { # customize nodeval_ to provide lazy evaluation of arguments
@@ -165,7 +165,7 @@ sub perlgen_and {
 sub jsgen_and {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
-	return '( ('.join(' && ', @arg_code).')? 1 : 0)';
+	return '(('.join('&&', @arg_code).')?1:0)';
 }
 
 sub nodeval_or {
@@ -182,7 +182,7 @@ sub perlgen_or {
 sub jsgen_or {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
-	return '( ('.join(' || ', @arg_code).')? 1 : 0)';
+	return '(('.join('||', @arg_code).')?1:0)';
 }
 
 sub fn_not {
@@ -199,7 +199,7 @@ sub jsgen_not {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
 	@arg_code == 1 or die "Too many arguments to 'not'\n";
-	return '('.$arg_code[0].'? 0 : 1)';
+	return '('.$arg_code[0].'?0:1)';
 }
 
 sub fn_compare {
@@ -277,7 +277,7 @@ sub jsgen_if {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
 	@arg_code == 3 or die "IF(test, when_true, when_false) requires all 3 parameters\n";
-	return '( '.$arg_code[0].'? '.$arg_code[1].' : '.$arg_code[2].' )';
+	return '('.$arg_code[0].'?'.$arg_code[1].':'.$arg_code[2].')';
 }
 
 sub nodeval_iferror {
