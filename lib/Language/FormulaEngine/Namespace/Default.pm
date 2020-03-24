@@ -100,6 +100,11 @@ sub perlgen_sum {
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( '.join(' + ', @arg_code).' )';
 }
+sub jsgen_sum {
+	my ($self, $compiler, $node)= @_;
+	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
+	return '( '.join(' + ', @arg_code).' )';
+}
 
 sub fn_negative {
 	@_ == 1 or die "Can only negate a single value, not a list\n";
@@ -111,11 +116,22 @@ sub perlgen_negative {
 	@arg_code == 1 or die "Can only negate a single value, not a list\n";
 	return '(-('.$arg_code[0].'))';
 }
+sub jsgen_negative {
+	my ($self, $compiler, $node)= @_;
+	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
+	@arg_code == 1 or die "Can only negate a single value, not a list\n";
+	return '(-('.$arg_code[0].'))';
+}
 
 *fn_mul= *List::Util::product;
 sub perlgen_mul {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
+	return '( '.join(' * ', @arg_code).' )';
+}
+sub jsgen_mul {
+	my ($self, $compiler, $node)= @_;
+	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
 	return '( '.join(' * ', @arg_code).' )';
 }
 
@@ -127,6 +143,11 @@ sub fn_div {
 sub perlgen_div {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
+	return '( '.join(' / ', @arg_code).' )';
+}
+sub jsgen_div {
+	my ($self, $compiler, $node)= @_;
+	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
 	return '( '.join(' / ', @arg_code).' )';
 }
 
@@ -141,6 +162,11 @@ sub perlgen_and {
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( ('.join(' and ', @arg_code).')? 1 : 0)';
 }
+sub jsgen_and {
+	my ($self, $compiler, $node)= @_;
+	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
+	return '( ('.join(' && ', @arg_code).')? 1 : 0)';
+}
 
 sub nodeval_or {
 	my ($self, $node)= @_;
@@ -153,6 +179,11 @@ sub perlgen_or {
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( ('.join(' or ', @arg_code).')? 1 : 0)';
 }
+sub jsgen_or {
+	my ($self, $compiler, $node)= @_;
+	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
+	return '( ('.join(' || ', @arg_code).')? 1 : 0)';
+}
 
 sub fn_not {
 	@_ == 1 or die "Too many arguments to 'not'\n";
@@ -161,6 +192,12 @@ sub fn_not {
 sub perlgen_not {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
+	@arg_code == 1 or die "Too many arguments to 'not'\n";
+	return '('.$arg_code[0].'? 0 : 1)';
+}
+sub jsgen_not {
+	my ($self, $compiler, $node)= @_;
+	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
 	@arg_code == 1 or die "Too many arguments to 'not'\n";
 	return '('.$arg_code[0].'? 0 : 1)';
 }
@@ -236,6 +273,12 @@ sub perlgen_if {
 	@arg_code == 3 or die "IF(test, when_true, when_false) requires all 3 parameters\n";
 	return '( '.$arg_code[0].'? '.$arg_code[1].' : '.$arg_code[2].' )';
 }
+sub jsgen_if {
+	my ($self, $compiler, $node)= @_;
+	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
+	@arg_code == 3 or die "IF(test, when_true, when_false) requires all 3 parameters\n";
+	return '( '.$arg_code[0].'? '.$arg_code[1].' : '.$arg_code[2].' )';
+}
 
 sub nodeval_iferror {
 	my ($self, $node)= @_;
@@ -252,6 +295,11 @@ sub perlgen_iferror {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '(do { local $@; my $x; eval { $x=('.$arg_code[0].'); 1 }? $x : ('.$arg_code[1].') })';
+}
+sub jsgen_iferror {
+	my ($self, $compiler, $node)= @_;
+	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
+	return '(function(){ var x; try { x=('.$arg_code[0].'); } catch(e) { x=('.$arg_code[1].') } return x; })()';
 }
 
 sub nodeval_ifs {
@@ -274,6 +322,18 @@ sub perlgen_ifs {
 		$expr .= "($cond)? ($val) : ";
 	}
 	$expr .= 'die "IFS() had no true conditions\n")';
+	return $expr;
+}
+sub jsgen_ifs {
+	my ($self, $compiler, $node)= @_;
+	(my @arg_code= map $compiler->jsgen($_), @{$node->parameters}) & 1
+		and die "IFS(cond, val, ...) requires an even number of parameters\n";
+	my $expr= '(';
+	while (@arg_code) {
+		my ($cond, $val)= splice @arg_code, 0, 2;
+		$expr .= "($cond)? ($val) : ";
+	}
+	$expr .= 'throw "IFS() had no true conditions\n")';
 	return $expr;
 }
 

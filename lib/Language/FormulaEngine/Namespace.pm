@@ -162,12 +162,16 @@ sub get_function {
 	$name= lc $name;
 	my $info= $self->{_function_cache}{$name} ||= do {
 		my $fn= $self->can("fn_$name");
+		my $js= $self->can("js_$name");
 		my $ev= $self->can("nodeval_$name");
 		my $pl= $self->can("perlgen_$name");
-		$fn || $ev || $pl? {
+		my $jg= $self->can("jsgen_$name");
+		$fn || $ev || $pl || $js || $jg? {
 			($fn? ( native => $fn ) : ()),
 			($ev? ( evaluator => $ev ) : ()),
-			($pl? ( perl_generator => $pl ) : ())
+			($pl? ( perl_generator => $pl ) : ()),
+			($js? ( js_native => $js ) : ()),
+			($jg? ( js_generator => $jg ) : ()),
 		} : 1;
 	};
 	return ref $info? $info : undef;
