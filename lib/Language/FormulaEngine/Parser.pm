@@ -476,9 +476,12 @@ BEGIN {
 		sort { length($b) <=> length($a) } # longest keywords get priority
 		keys %keywords;
 	
+	# Perl 5.20.1 and 5.20.2 have a bug where regex comparisons on unicode strings can crash.
+	# It seems to damage the scalar $1, but running a simple "lc" on it fixes it, or something.
+	my $perl5_20_fix= $] >= 5.020000 && $] < 5.020003? 'my $x= lc $1;' : '';
 	# Evaling this just to make sure the regex gets compiled one single time
-	my $scan_token= eval q%
-		sub {
+	eval q%
+		sub scan_token {
 			my $self= shift;
 			
 			# Ignore whitespace
@@ -496,7 +499,8 @@ BEGIN {
 			}
 			
 			# Check for any keyword, and convert the type to the canonical (lowercase) name.
-			if ($self->{input} =~ /\G(%.$kw_regex.q%)/gc) {
+			if ($self->{input} =~ /\G(% . $kw_regex . q%)/gc) {
+				% . $perl5_20_fix . q%
 				return $keywords{lc $1} => $1;
 			}
 			
@@ -513,10 +517,9 @@ BEGIN {
 				return String => $str;
 			}
 			return;
-		}
+		};
+		1
 	% or die $@;
-	no strict 'refs';
-	*scan_token= $scan_token;
 }
 
 =head2 Parse Nodes
