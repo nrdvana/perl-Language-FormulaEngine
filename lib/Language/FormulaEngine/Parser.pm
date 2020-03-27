@@ -461,27 +461,39 @@ Any alpha (or underscore) followed by any run of alphanumerics,
 
 =cut
 
-our (@CMP_OPS, @MATH_OPS, @LOGIC_OPS, @LIST_OPS);
-BEGIN {
-	@CMP_OPS= (qw(  =  ==  !=  <>  >  >=  <  <=  ), "\x{2260}", "\x{2264}", "\x{2265}");
-	@MATH_OPS= qw(  +  -  *  /  );
-	@LOGIC_OPS= qw(  and  or  not  !  );
-	@LIST_OPS= ( ',', '(', ')' );
-	my %keywords= (
-		(map { $_ => $_ } @CMP_OPS, @MATH_OPS, @LOGIC_OPS, @LIST_OPS),
-		'=' => '==', '<>' => '!=', "\x{2260}" => '!=',
-		"\x{2264}" => '<=', "\x{2265}" => '>=',
-	);
-	my $kw_regex= join '|', map { "\Q$_\E" }
+sub cmp_operators { qw(  =  ==  !=  <>  >  >=  <  <=  ), "\x{2260}", "\x{2264}", "\x{2265}" }
+sub math_operators { qw(  +  -  *  /  ) }
+sub logic_operators { qw(  and  or  not  !  ) }
+sub list_operators { ',', '(', ')' }
+my $keyword_map;
+sub keyword_map {
+	$keyword_map ||= do {
+		use Const::Fast;
+		const my %keyword_map,
+			(map { $_ => $_ } cmp_operators, math_operators, logic_operators, list_operators),
+			'=' => '==', '<>' => '!=', "\x{2260}" => '!=',
+			"\x{2264}" => '<=', "\x{2265}" => '>=';
+		\%keyword_map;
+	};
+}
+sub _build_scan_token_method {
+	my ($pkg, $method_name)= @_;
+	$pkg= ref $pkg if ref $pkg;
+	$method_name= 'scan_token' unless defined $method_name;
+	my $keywords= $pkg->keyword_map;
+	my $kw_regex= join '|', map "\Q$_\E",
 		sort { length($b) <=> length($a) } # longest keywords get priority
-		keys %keywords;
+		keys %$keywords;
 	
 	# Perl 5.20.1 and 5.20.2 have a bug where regex comparisons on unicode strings can crash.
 	# It seems to damage the scalar $1, but running a simple "lc" on it fixes it, or something.
 	my $perl5_20_fix= $] >= 5.020000 && $] < 5.020003? 'my $x= lc $1;' : '';
-	# Evaling this just to make sure the regex gets compiled one single time
+	# Evaling this just to make sure the regex gets compiled one single time.
+	# Adding /o would also work, but that was discouraged by the documentation.
+	no warnings 'redefine';
 	eval q%
-		sub scan_token {
+		sub % . $pkg . '::' . $method_name . q%
+		{
 			my $self= shift;
 			
 			# Ignore whitespace
@@ -501,7 +513,7 @@ BEGIN {
 			# Check for any keyword, and convert the type to the canonical (lowercase) name.
 			if ($self->{input} =~ /\G(% . $kw_regex . q%)/gc) {
 				% . $perl5_20_fix . q%
-				return $keywords{lc $1} => $1;
+				return $keywords->{lc $1} => $1;
 			}
 			
 			# Check for identifiers
@@ -521,6 +533,7 @@ BEGIN {
 		1
 	% or die $@;
 }
+sub scan_token { $_[0]->_build_scan_token_method; my $m= $_[0]->can('scan_token'); goto $m; };
 
 =head2 Parse Nodes
 
