@@ -20,7 +20,7 @@ This class scans tokens from an input string and builds a parse tree.  In compil
 it is both a Scanner and Parser.  It performs a top-down recursive descent parse, because this
 is easy and gives good error messages.  It only parses strings, but leaves room for subclasses
 to implement streaming.  By default, the parser simply applies a Grammar to the input, without
-checking whether the functions variables exist, but can be subclassed to do more detailed
+checking whether the functions or variables exist, but can be subclassed to do more detailed
 analysis during the parse.
 
 The generated parse tree is made up of Function nodes (each infix operator is converted to a
@@ -476,64 +476,58 @@ sub keyword_map {
 		\%keyword_map;
 	};
 }
-sub _build_scan_token_method {
-	my ($pkg, $method_name)= @_;
-	$pkg= ref $pkg if ref $pkg;
-	$method_name= 'scan_token' unless defined $method_name;
-	my $keywords= $pkg->keyword_map;
+sub scanner_rules {
+	my $self= shift;
+	my $keywords= $self->keyword_map;
 	my $kw_regex= join '|', map "\Q$_\E",
 		sort { length($b) <=> length($a) } # longest keywords get priority
 		keys %$keywords;
 	
 	# Perl 5.20.1 and 5.20.2 have a bug where regex comparisons on unicode strings can crash.
-	# It seems to damage the scalar $1, but running a simple "lc" on it fixes it, or something.
-	my $perl5_20_fix= $] >= 5.020000 && $] < 5.020003? 'my $x= lc $1;' : '';
-	# Evaling this just to make sure the regex gets compiled one single time.
-	# Adding /o would also work, but that was discouraged by the documentation.
-	no warnings 'redefine';
-	eval q%
-		sub % . $pkg . '::' . $method_name . q%
-		{
-			my $self= shift;
-			
-			# Ignore whitespace
-			if ($self->{input} =~ /\G(\s+)/gc) {
-				return '' => ''; # empty string causes next_token to loop
-			}
-			
-			# Check for numbers
-			if ($self->{input} =~ /\G([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)\b/gc) {
-				return Number => $1+0;
-			}
-			# or hex numbers
-			if ($self->{input} =~ /\G0x([0-9A-Fa-f]+)/gc) {
-				return Number => hex($1);
-			}
-			
-			# Check for any keyword, and convert the type to the canonical (lowercase) name.
-			if ($self->{input} =~ /\G(% . $kw_regex . q%)/gc) {
-				% . $perl5_20_fix . q%
-				return $keywords->{lc $1} => $1;
-			}
-			
-			# Check for identifiers
-			if ($self->{input} =~ /\G([A-Za-z_][A-Za-z0-9_.]*)\b/gc) {
-				return Identifier => $1;
-			}
-			
-			# Single or double quoted string, using Pascal-style repeated quotes for escaping
-			if ($self->{input} =~ /\G(?:"((?:[^"]|"")*)"|'((?:[^']|'')*)')/gc) {
+	# It seems to damage the scalar $1, but copying it first fixes the problem.
+	my $kw_canonical= $] >= 5.020000 && $] < 5.020003? '$keywords->{lc(my $clone1= $1)}' : '$keywords->{lc $1}';
+	return (
+		# Pattern Name, Pattern, Token Type and Token Value
+		[ 'Whitespace',  qr/(\s+)/, '"" => ""' ], # empty string causes next_token to loop
+		[ 'Decimal',     qr/([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)\b/, 'Number => $1+0' ],
+		[ 'Hexadecimal', qr/0x([0-9A-Fa-f]+)/, 'Number => hex($1)' ],
+		[ 'Keywords',    qr/($kw_regex)/, "$kw_canonical => \$1" ],
+		[ 'Identifiers', qr/([A-Za-z_][A-Za-z0-9_.]*)\b/, 'Identifier => $1' ],
+		# Single or double quoted string, using Pascal-style repeated quotes for escaping
+		[ 'StringLiteral', qr/(?:"((?:[^"]|"")*)"|'((?:[^']|'')*)')/, q%
+			do{
 				my $str= defined $1? $1 : $2;
 				$str =~ s/""/"/g if defined $1;
 				$str =~ s/''/'/g if defined $2;
-				return String => $str;
+				(String => $str)
 			}
-			return;
-		};
-		1
-	% or die $@;
+		%],
+	);
 }
-sub scan_token { $_[0]->_build_scan_token_method; my $m= $_[0]->can('scan_token'); goto $m; };
+
+sub _build_scan_token_method_body {
+	my $self= shift;
+	return join('', map
+			'  return ' . $_->[2] . ' if $self->{input} =~ /\G' . $_->[1] . "/gc;\n",
+			$self->scanner_rules
+		).'  return;' # return empty list of no rule matched
+}
+
+sub _build_scan_token_method {
+	my ($pkg, $method_name)= @_;
+	$pkg= ref $pkg if ref $pkg;
+	$method_name= 'scan_token' unless defined $method_name;
+	my $keywords= $pkg->keyword_map; # this is made available to the eval
+	my $code= "sub ${pkg}::$method_name {\n"
+		."  my \$self= shift;\n"
+		.$pkg->_build_scan_token_method_body
+		."}\n";
+	no warnings 'redefine';
+	eval "$code; 1" or die $@ . "for generated scanner code:\n".$code;
+	return $pkg->can('scan_token');
+}
+
+sub scan_token { my $m= $_[0]->_build_scan_token_method; goto $m; };
 
 =head2 Parse Nodes
 
