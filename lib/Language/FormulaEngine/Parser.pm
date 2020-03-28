@@ -491,7 +491,7 @@ sub scanner_rules {
 		[ 'Whitespace',  qr/(\s+)/, '"" => ""' ], # empty string causes next_token to loop
 		[ 'Decimal',     qr/([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)\b/, 'Number => $1+0' ],
 		[ 'Hexadecimal', qr/0x([0-9A-Fa-f]+)/, 'Number => hex($1)' ],
-		[ 'Keywords',    qr/($kw_regex)/, "$kw_canonical => \$1" ],
+		[ 'Keywords',    qr/($kw_regex)/, $kw_canonical.' => $1' ],
 		[ 'Identifiers', qr/([A-Za-z_][A-Za-z0-9_.]*)\b/, 'Identifier => $1' ],
 		# Single or double quoted string, using Pascal-style repeated quotes for escaping
 		[ 'StringLiteral', qr/(?:"((?:[^"]|"")*)"|'((?:[^']|'')*)')/, q%
@@ -522,7 +522,9 @@ sub _build_scan_token_method {
 		."  my \$self= shift;\n"
 		.$pkg->_build_scan_token_method_body
 		."}\n";
-	no warnings 'redefine';
+	# closure needed for 5.8 and 5.10 which complain about using a lexical
+	# in a sub declared at package scope.
+	no warnings 'redefine','closure';
 	eval "$code; 1" or die $@ . "for generated scanner code:\n".$code;
 	return $pkg->can('scan_token');
 }
