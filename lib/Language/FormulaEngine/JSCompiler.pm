@@ -44,20 +44,19 @@ written as C<< FormulaEngine.compare= function() { ... }; >>.  If the prefix doe
 a dot, such as C<< "MyPrefix_" >> the function would be written as
 C<< function MyPrefix_compare(){ ... } >>.
 
-=head2 gen_var_access
+=head2 variables_via_method
 
-   gen_var_access => sub { my ($compiler, $symbol_node)= @_; ... }
+By default, accessing a variable generates C<< arguments[0]["name"] >>.  This attribute can be
+set to the name of a method that will be called: C<< arguments[0].get_value("name") >>.
 
-This attribute is a coderef or method name which will be called against the compiler object to
-generate JavaScript to access a variable.
-
-The default is to access attributes of C<this> assuming that the generated code was installed
-as a method of an object.
+If you want more flexibility, consider overriding method L</jsgen_variable> or subclassing
+the parser to build different parse nodes (such as function calls).
 
 =cut
 
 has namespace => is => 'rw', trigger => 1;
 has js_function_prefix => is => 'ro', default => 'FormulaEngine.';
+has variables_via_method => is => 'ro';
 has error => ( is => 'rw' );
 has code_body => ( is => 'rw' );
 has dependencies => is => 'rw', default => sub { {} };
@@ -76,12 +75,6 @@ sub _trigger_namespace {
 	my ($self, $newval)= @_;
 	$self->_clear_js_generator_cache;
 	$self->reset;
-}
-
-has gen_var_access => is => 'lazy', default => '_vars_from_this';
-sub _vars_from_this {
-	#my ($self, $node)= @_;
-	'this.'.$_[1]->symbol_name;
 }
 
 has _js_generator_cache => ( is => 'lazy', clearer => 1, default => sub { {} } );
@@ -208,8 +201,7 @@ sub jsgen_symbol_node {
 	my $x= $self->namespace->get_constant($name);
 	if (!defined $x) {
 		# not a constant, treat as var access
-		my $m= $self->gen_var_access;
-		return $self->$m($node);
+		return $self->jsgen_variable($name);
 	}
 	elsif (!ref $x) {
 		# literal constant
@@ -259,6 +251,26 @@ sub jsgen_literal {
 	my ($self, $string)= @_;
 	no warnings 'numeric';
 	return ($string+0) eq $string? $string+0 : $self->jsgen_string_literal($string);
+}
+
+=head2 jsgen_variable
+
+This generates code to read from a named variable.  The default implementation looks up the
+variable as a single field name of the first argument to the current function.
+
+You can subclass this compiler to change to something like directly accessing globals or
+named arguments to the function.
+
+For more advanced variable-access, such as generating a function call to read the variable,
+consider subclassing the parser so that it generates Call nodes instead of Symbol nodes.
+
+=cut
+
+sub jsgen_variable {
+	my ($self, $string)= @_;
+	my $m= $self->variables_via_method;
+	my $literal= $self->jsgen_string_literal($string);
+	return defined $m? "arguments[0].$m($literal)" : "arguments[0][$literal]";
 }
 
 1;
