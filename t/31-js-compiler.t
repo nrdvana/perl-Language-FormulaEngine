@@ -10,13 +10,13 @@ my @tests= (
 		args => {},
 		tests => [
 			[ 'foo+5',
-				q|(this.foo+5)|
+				q|(arguments[0]["foo"]+5)|
 			],
 			[ 'foo+1*baz+bar/6/7/8',
-				q|(this.foo+(1*this.baz)+(((this.bar/6)/7)/8))|
+				q|(arguments[0]["foo"]+(1*arguments[0]["baz"])+(((arguments[0]["bar"]/6)/7)/8))|
 			],
 			[ 'IF(foo,bar,baz)',
-				q|(this.foo?this.bar:this.baz)|
+				q|(arguments[0]["foo"]?arguments[0]["bar"]:arguments[0]["baz"])|
 			],
 		],
 		js_dep => '',
@@ -24,12 +24,11 @@ my @tests= (
 	{
 		name => 'With custom var access',
 		args => {
-			js_function_prefix => 'FE_',
-			gen_var_access => sub { 'FE_get_var('.$_[0]->jsgen_string_literal($_[1]->symbol_name).',arguments)' },
+			variables_via_method => 'get_var'
 		},
 		tests => [
 			[ 'foo+5',
-				q|(FE_get_var("foo",arguments)+5)|
+				q|(arguments[0].get_var("foo")+5)|
 			],
 		],
 		js_dep => '',
@@ -38,7 +37,10 @@ my @tests= (
 
 for my $outer (@tests) {
 	subtest $outer->{name} => sub {
-		my $fe= Language::FormulaEngine->new(compiler => Language::FormulaEngine::JSCompiler->new($outer->{args}));
+		my $fe= Language::FormulaEngine->new(
+			compiler => Language::FormulaEngine::JSCompiler->new($outer->{args}),
+			namespace => 'Language::FormulaEngine::Namespace::JSDefault',
+		);
 		for (@{ $outer->{tests} }) {
 			my ($str, $code, $err_regex)= @$_;
 			subtest qq{"$str"} => sub {

@@ -100,11 +100,6 @@ sub perlgen_sum {
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( '.join(' + ', @arg_code).' )';
 }
-sub jsgen_sum {
-	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
-	return '('.join('+', @arg_code).')';
-}
 
 sub fn_negative {
 	@_ == 1 or die "Can only negate a single value, not a list\n";
@@ -116,23 +111,12 @@ sub perlgen_negative {
 	@arg_code == 1 or die "Can only negate a single value, not a list\n";
 	return '(-('.$arg_code[0].'))';
 }
-sub jsgen_negative {
-	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
-	@arg_code == 1 or die "Can only negate a single value, not a list\n";
-	return '(-('.$arg_code[0].'))';
-}
 
 *fn_mul= *List::Util::product;
 sub perlgen_mul {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( '.join(' * ', @arg_code).' )';
-}
-sub jsgen_mul {
-	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
-	return '('.join('*', @arg_code).')';
 }
 
 sub fn_div {
@@ -144,11 +128,6 @@ sub perlgen_div {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( '.join(' / ', @arg_code).' )';
-}
-sub jsgen_div {
-	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
-	return '('.join('/', @arg_code).')';
 }
 
 sub nodeval_and { # customize nodeval_ to provide lazy evaluation of arguments
@@ -162,11 +141,6 @@ sub perlgen_and {
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( ('.join(' and ', @arg_code).')? 1 : 0)';
 }
-sub jsgen_and {
-	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
-	return '(('.join('&&', @arg_code).')?1:0)';
-}
 
 sub nodeval_or {
 	my ($self, $node)= @_;
@@ -179,11 +153,6 @@ sub perlgen_or {
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( ('.join(' or ', @arg_code).')? 1 : 0)';
 }
-sub jsgen_or {
-	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
-	return '(('.join('||', @arg_code).')?1:0)';
-}
 
 sub fn_not {
 	@_ == 1 or die "Too many arguments to 'not'\n";
@@ -194,12 +163,6 @@ sub perlgen_not {
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	@arg_code == 1 or die "Too many arguments to 'not'\n";
 	return '('.$arg_code[0].'? 0 : 1)';
-}
-sub jsgen_not {
-	my ($self, $compiler, $node)= @_;
-	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
-	@arg_code == 1 or die "Too many arguments to 'not'\n";
-	return '('.$arg_code[0].'?0:1)';
 }
 
 sub fn_compare {
