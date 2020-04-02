@@ -189,7 +189,9 @@ Throw an NA exception.
 =cut
 
 sub js_choose {
-	'if(!(arguments.length>0&&arguments[0]>0&&arguments[0]<arguments.length){throw "CHOSE() selector out of bounds ("+arguments[0]+")"}'
+	'if(!(arguments.length>0&&arguments[0]>0&&arguments[0]<arguments.length){'
+	  .'throw "CHOSE() selector out of bounds ("+arguments[0]+")"'
+	.'}'
 	.'return arguments[arguments[0]];'
 }
 
@@ -201,6 +203,40 @@ sub jsgen_if {
 	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
 	@arg_code == 3 or die "IF(test, when_true, when_false) requires all 3 parameters\n";
 	return '('.$arg_code[0].'?'.$arg_code[1].':'.$arg_code[2].')';
+}
+
+sub jsgen_iferror {
+	my ($self, $compiler, $node)= @_;
+	my @arg_code= map $compiler->jsgen($_), @{$node->parameters};
+	return '(function(){ var x; try { x=('.$arg_code[0].'); } catch(e) { x=('.$arg_code[1].') } return x; })()';
+}
+
+sub js_ifs {
+	'for(var i=0;i<arguments.length;i+=2)'
+	.  'if(arguments[i]) return arguments[i+1];'
+	.  'throw "IFS() had no true conditions"';
+}
+sub jsgen_ifs {
+	my ($self, $compiler, $node)= @_;
+	(my @arg_code= map $compiler->jsgen($_), @{$node->parameters}) & 1
+		and die "IFS(cond, val, ...) requires an even number of parameters\n";
+	my $expr= '(';
+	while (@arg_code) {
+		my ($cond, $val)= splice @arg_code, 0, 2;
+		$expr .= "($cond)? ($val) : ";
+	}
+	$expr .= 'throw "IFS() had no true conditions")';
+	return $expr;
+}
+
+sub js_ErrNA {
+	'this.message= arguments[0]'
+}
+sub js_na {
+	'throw new this.ErrNA("NA")'
+}
+sub jsgen_na {
+	'throw new this.ErrNA("NA")'
 }
 
 1;
