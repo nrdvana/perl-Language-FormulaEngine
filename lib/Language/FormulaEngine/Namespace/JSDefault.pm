@@ -6,6 +6,7 @@ use Try::Tiny;
 use List::Util ();
 use Math::Trig ();
 use Scalar::Util ();
+use Carp;
 use Language::FormulaEngine::Error ':all';
 use namespace::clean;
 
@@ -24,6 +25,31 @@ sub _collect_function_info {
 		($js? ( js => $js ) : ()),
 		($gen? ( js_generator => $gen ) : ()),
 		$self->maybe::next::method($name);
+}
+
+sub to_javascript {
+	my ($self, $dep_set)= @_;
+	my $deps= !$dep_set? $self->_find_all_methods(qr/^js_/)
+		: ref $dep_set eq 'HASH'? [ keys %$dep_set ]
+		: ref $dep_set eq 'ARRAY'? $dep_set
+		: croak "Can't process dependencies from ".$dep_set;
+	return "function(){\n"
+		."var ctor=function(){};\n"
+		.join('', map "ctor.prototype.fn_".($_=~s/^js_//r)."=function(){".$self->$_."};\n", @$deps)
+		."return ctor;\n"
+		."}";
+}
+
+sub _find_all_methods {
+	my ($self, $pattern)= @_;
+	use MRO::Compat;
+	my $todo= mro::get_linear_isa(ref $self || $self);
+	my (%seen, @ret);
+	for my $pkg (@$todo) {
+		no strict 'refs';
+		push @ret, grep +($_ =~ $pattern and !$seen{$_}++), keys %{$pkg.'::'};
+	}
+	\@ret;
 }
 
 =head2 Core Grammar Functionality
@@ -233,10 +259,16 @@ sub js_ErrNA {
 	'this.message= arguments[0]'
 }
 sub js_na {
-	'throw new this.ErrNA("NA")'
+	my ($self, $compiler, $node)= @_;
+	++$compiler->dependencies->{'fn_ErrNA'} if $compiler;
+	'throw new this.fn_ErrNA("NA")'
 }
 sub jsgen_na {
-	'throw new this.ErrNA("NA")'
+	my ($self, $compiler, $node)= @_;
+	++$compiler->dependencies->{'fn_ErrNA'};
+	'throw new this.fn_ErrNA("NA")'
 }
+
+
 
 1;
