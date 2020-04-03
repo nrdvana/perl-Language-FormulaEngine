@@ -29,7 +29,7 @@ sub _collect_function_info {
 
 sub to_javascript {
 	my ($self, $dep_set)= @_;
-	my $deps= !$dep_set? $self->_find_all_methods(qr/^js_/)
+	my $deps= !$dep_set? $self->find_methods(qr/^js_/)
 		: ref $dep_set eq 'HASH'? [ keys %$dep_set ]
 		: ref $dep_set eq 'ARRAY'? $dep_set
 		: croak "Can't process dependencies from ".$dep_set;
@@ -38,18 +38,6 @@ sub to_javascript {
 		.join('', map "ctor.prototype.fn_".($_=~s/^js_//r)."=function(){".$self->$_."};\n", @$deps)
 		."return ctor;\n"
 		."}";
-}
-
-sub _find_all_methods {
-	my ($self, $pattern)= @_;
-	use MRO::Compat;
-	my $todo= mro::get_linear_isa(ref $self || $self);
-	my (%seen, @ret);
-	for my $pkg (@$todo) {
-		no strict 'refs';
-		push @ret, grep +($_ =~ $pattern and !$seen{$_}++), keys %{$pkg.'::'};
-	}
-	\@ret;
 }
 
 =head2 Core Grammar Functionality
