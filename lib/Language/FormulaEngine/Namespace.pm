@@ -2,6 +2,7 @@ package Language::FormulaEngine::Namespace;
 use Moo;
 use Carp;
 use Try::Tiny;
+require MRO::Compat if $] lt '5.009005';
 use Language::FormulaEngine::Error ':all';
 use namespace::clean;
 
@@ -203,6 +204,26 @@ sub evaluate_call {
 	# Else the definition of the function is incomplete.
 	die ErrNAME("Incomplete function '$name' cannot be evaluated");
 }
+
+=head2 find_methods
+
+Find methods on this object that match a regex.
+
+  my $method_name_arrayref= $ns->find_methods(qr/^fn_/);
+
+=cut
+
+sub find_methods {
+	my ($self, $pattern)= @_;
+	my $todo= mro::get_linear_isa(ref $self || $self);
+	my (%seen, @ret);
+	for my $pkg (@$todo) {
+		my $stash= do { no strict 'refs'; \%{$pkg.'::'} };
+		push @ret, grep +($_ =~ $pattern and defined $stash->{$_}{CODE} and !$seen{$_}++), keys %$stash;
+	}
+	\@ret;
+}
+
 
 =head1 FUNCTION LIBRARY
 
