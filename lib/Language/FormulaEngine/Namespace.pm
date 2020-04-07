@@ -38,6 +38,21 @@ every time a formula is evaluated.
 
 Same as L</variables>, but these may be compiled into coderefs.
 
+=head2 methods
+
+Set of Namespace methods which should be exposed as functions to the expressions.  The keys of
+this hashref are the names available to the formulas.  The value may be a coderef, or a scalar
+of the actual name of the method, or C<undef> to reference the method of the same name.
+
+  methods => {
+    a => undef, # undef means to call $namespace->foo(...)
+    b => 'c',   # a scalar means to call $namespace->c(...)
+    d => sub {...} # coderef is used directly: $namespace->$sub(...)
+  }
+
+Names present in this hash will take priority over auto-detection of "C<fn_>"
+functions, resulting in a method call instead of a function call.
+
 =head2 die_on_unknown_value
 
 Controls behavior of L</get_value>.  If false (the default) unknown symbol names will resolve
@@ -48,6 +63,7 @@ L<ErrREF exception|Language::FormulaEngine::Error/ErrREF>.
 
 has variables            => ( is => 'rw', default => sub { +{} } );
 has constants            => ( is => 'rw', default => sub { +{} } );
+has methods              => ( is => 'rw', default => sub { +{} } );
 has die_on_unknown_value => ( is => 'rw' );
 
 =head1 METHODS
@@ -103,6 +119,7 @@ on setting of L</die_on_unknown_value>.
   # Returns:
   # {
   #   native         => $coderef,
+  #   method         => $name_or_coderef,
   #   evaluator      => $method,
   #   perl_generator => $method,
   # }
