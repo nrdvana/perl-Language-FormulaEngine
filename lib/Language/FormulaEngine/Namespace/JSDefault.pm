@@ -34,7 +34,8 @@ sub to_javascript {
 		: ref $dep_set eq 'ARRAY'? $dep_set
 		: croak "Can't process dependencies from ".$dep_set;
 	return "function(){\n"
-		."var ctor=function(){};\n"
+		."var ctor=function(){var a=(arguments.length==1&&Array.isArray(arguments[0]))?arguments[0]:arguments;for(var i=0;i<a.length;i++){Object.assign(this,a[i])}};\n"
+		."ctor.prototype.clone=function(){new ctor([this].concat(arguments)};\n"
 		.join('', map "ctor.prototype.fn_".($_=~s/^js_//r)."=function(){".$self->$_."};\n", @$deps)
 		."return ctor;\n"
 		."}";
