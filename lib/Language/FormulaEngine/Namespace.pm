@@ -161,17 +161,24 @@ sub get_value {
 sub get_function {
 	my ($self, $name)= @_;
 	$name= lc $name;
+	# The value 0E0 is a placeholder for "no such function"
 	my $info= $self->{_function_cache}{$name} ||= do {
-		my $fn= $self->can("fn_$name");
-		my $ev= $self->can("nodeval_$name");
-		my $pl= $self->can("perlgen_$name");
-		$fn || $ev || $pl? {
-			($fn? ( native => $fn ) : ()),
-			($ev? ( evaluator => $ev ) : ()),
-			($pl? ( perl_generator => $pl ) : ())
-		} : 1;
+		my %tmp= $self->_collect_function_info($name);
+		keys %tmp? \%tmp : '0E0';
 	};
 	return ref $info? $info : undef;
+}
+
+sub _collect_function_info {
+	my ($self, $name)= @_;
+	my $fn= $self->can("fn_$name");
+	my $ev= $self->can("nodeval_$name");
+	my $pl= $self->can("perlgen_$name");
+	return
+		($fn? ( native => $fn ) : ()),
+		($ev? ( evaluator => $ev ) : ()),
+		($pl? ( perl_generator => $pl ) : ()),
+		$self->maybe::next::method($name);
 }
 
 =head2 evaluate_call
