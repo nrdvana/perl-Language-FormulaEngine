@@ -74,11 +74,12 @@ sub clone {
 	$self->new( %$self, %attrs );
 }
 
+# potentially hot method
 sub clone_and_merge {
 	my $self= shift;
 	my %attrs= @_==1 && ref $_[0] eq 'HASH'? %{$_[0]} : @_;
-	$attrs{variables}= { %{ $self->variables }, %{ $attrs{variables}||{} } };
-	$attrs{constants}= { %{ $self->constants }, %{ $attrs{constants}||{} } };
+	$attrs{variables}= { %{ $self->variables }, ($attrs{variables}? %{ $attrs{variables} } : () ) };
+	$attrs{constants}= { %{ $self->constants }, ($attrs{constants}? %{ $attrs{constants} } : () ) };
 	$self->new( %$self, %attrs );
 }
 
@@ -146,16 +147,19 @@ C<< $self->can("perlgen_$name") >>.
 sub get_constant {
 	my ($self, $name)= @_;
 	$name= lc $name;
-	$self->{constants}{$name};
+	$self->constants->{$name};
 }
 
 sub get_value {
 	my ($self, $name)= @_;
 	$name= lc $name;
-	exists $self->{variables}{$name}? $self->{variables}{$name}
-	: exists $self->{constants}{$name}? $self->{constants}{$name}
-	: !$self->die_on_unknown_value? undef
-	: die ErrREF("Unknown variable or constant '$_[1]'");
+	my $set= $self->variables;
+	return $set->{$name} if exists $set->{$name};
+	$set= $self->constants;
+	return $set->{$name} if exists $set->{$name};
+	die ErrREF("Unknown variable or constant '$_[1]'")
+		if $self->die_on_unknown_value;
+	return undef;
 }
 
 sub get_function {
