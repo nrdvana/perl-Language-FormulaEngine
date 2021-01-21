@@ -3,8 +3,6 @@ use Test2::V0;
 use Try::Tiny;
 use Language::FormulaEngine;
 
-my $vars= { baz => 42 };
-
 #-----------------------------------------------------------------------------
 # Example of compiling with a custom namespace
 {
@@ -16,7 +14,7 @@ my $vars= { baz => 42 };
 subtest custom_namespace_function => sub {
 	my $engine= Language::FormulaEngine->new(namespace => MyContext->new);
 	my $formula= $engine->compile( 'CustomFunc(baz,2,3)' );
-	is( $formula->($vars), "arguments are 42, 2, 3\n", 'correct result' );
+	is( $formula->({ baz => 42 }), "arguments are 42, 2, 3\n", 'correct result' );
 };
 
 #-----------------------------------------------------------------------------
@@ -34,7 +32,7 @@ subtest custom_namespace_get_var => sub {
 		namespace => { CLASS => 'MyContext2' },
 	);
 	my $formula= $engine->compile( 'CustomFunc(baz,2,3)' );
-	is( $formula->($vars), "arguments are 43, 2, 3\n", 'correct result' )
+	is( $formula->({ baz => 42 }), "arguments are 43, 2, 3\n", 'correct result' )
 		or diag 'code_body = '.$engine->compiler->code_body;
 };
 
@@ -51,8 +49,23 @@ subtest deprecated_variables_via_namespace => sub {
 		);
 	};
 	my $formula= $engine->compile( 'CustomFunc(baz,2,3)' );
-	is( $formula->(variables => $vars), "arguments are 43, 2, 3\n", 'correct result' )
+	is( $formula->(variables => { baz => 42 }), "arguments are 43, 2, 3\n", 'correct result' )
 		or diag 'code_body = '.$engine->compiler->code_body;
+};
+
+#-----------------------------------------------------------------------------
+# Check whether any of the above tests left behind any FormulaEngine objects
+#
+subtest leak_check => sub {
+	skip_all "Devel::Gladiator is not available"
+		unless eval { require Devel::Gladiator; };
+	my $current_arena= Devel::Gladiator::walk_arena();
+	my @leaked_objects= grep ref($_) =~ /^Language::FormulaEngine/, @$current_arena;
+	# Note: checking for leftover FormulaEngine objects also effectively checks for leftover
+	# compiled formulas, because a compiled formula holds a reference to the Namespace
+	ok( 0 == @leaked_objects, 'all formula engine objects cleaned up' )
+		or diag @leaked_objects;
+	@$current_arena= ();
 };
 
 done_testing;
