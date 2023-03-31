@@ -611,11 +611,20 @@ and C<parameters>
 
 =cut
 
+sub Language::FormulaEngine::Parser::Node::Call::new {
+	my ($class, $name, $params)= @_;
+	bless [ $name, $params ], $class;
+}
+sub Language::FormulaEngine::Parser::Node::Call::is_constant { 0 }
 sub Language::FormulaEngine::Parser::Node::Call::function_name { $_[0][0] }
 sub Language::FormulaEngine::Parser::Node::Call::parameters { $_[0][1] }
 sub Language::FormulaEngine::Parser::Node::Call::evaluate {
 	my ($self, $namespace)= @_;
 	$namespace->evaluate_call($self);
+}
+sub Language::FormulaEngine::Parser::Node::Call::simplify {
+	my ($node, $namespace)= @_;
+	$namespace->simplify_call($node)
 }
 sub Language::FormulaEngine::Parser::Node::Call::deparse {
 	my ($node, $parser)= @_;
@@ -640,10 +649,20 @@ It has one attribute C<symbol_name>.
 
 =cut
 
+sub Language::FormulaEngine::Parser::Node::symbol::new {
+	my ($class, $name)= @_;
+	bless \$name, $class;
+}
+
+sub Language::FormulaEngine::Parser::Node::Symbol::is_constant { 0 }
 sub Language::FormulaEngine::Parser::Node::Symbol::symbol_name { ${$_[0]} }
 sub Language::FormulaEngine::Parser::Node::Symbol::evaluate {
 	my ($self, $namespace)= @_;
 	$namespace->get_value($$self);
+}
+sub Language::FormulaEngine::Parser::Node::Symbol::simplify {
+	my ($self, $namespace)= @_;
+	return $namespace->simplify_symref($self);
 }
 sub Language::FormulaEngine::Parser::Node::Symbol::deparse {
 	shift->symbol_name;
@@ -663,8 +682,15 @@ A string literal.  It has an attribute C<string_value> holding the raw value.
 
 =cut
 
+sub Language::FormulaEngine::Parser::Node::String::new {
+	my ($class, $value)= @_;
+	bless \$value, $class;
+}
+
+sub Language::FormulaEngine::Parser::Node::String::is_constant { 1 }
 sub Language::FormulaEngine::Parser::Node::String::string_value { ${$_[0]} }
 sub Language::FormulaEngine::Parser::Node::String::evaluate { ${$_[0]} }
+sub Language::FormulaEngine::Parser::Node::String::simplify { $_[0] }
 sub _str_escape {
 	my $str= shift;
 	$str =~ s/'/''/g;
@@ -687,8 +713,16 @@ A numeric constant.  It has an attribute C<number_value> holding the raw value.
 
 =cut
 
+sub Language::FormulaEngine::Parser::Node::Number::new {
+	my ($class, $value)= @_;
+	$value= 0+$value;
+	bless \$value, $class;
+}
+	
+sub Language::FormulaEngine::Parser::Node::Number::is_constant { 1 }
 sub Language::FormulaEngine::Parser::Node::Number::number_value { ${$_[0]} }
 sub Language::FormulaEngine::Parser::Node::Number::evaluate { ${$_[0]} }
+sub Language::FormulaEngine::Parser::Node::Number::simplify { $_[0] }
 sub Language::FormulaEngine::Parser::Node::Number::deparse { shift->number_value }
 
 sub new_number {

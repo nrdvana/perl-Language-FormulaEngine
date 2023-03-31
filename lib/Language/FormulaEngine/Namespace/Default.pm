@@ -95,13 +95,30 @@ comparison otherwise.
 =cut
 
 *fn_sum= *List::Util::sum0;
+__PACKAGE__->MODIFY_CODE_ATTRIBUTES(\&fn_sum, 'Pure');
+sub simplify_sum {
+	my ($self, $node)= @_;
+	my ($const, @unknown)= (0);
+	for (@{ $node->parameters }) {
+		if ($_->is_constant) {
+			$const += $_->evaluate($self);
+		} else {
+			push @unknown, $_;
+		}
+	}
+	return $node if @unknown == @{ $node->parameters };
+	my $const_node= Language::FormulaEngine::Parser::Node::Number->new($const);
+	return $const_node unless @unknown;
+	push @unknown, $const_node if $const != 0;
+	return Language::FormulaEngine::Parser::Node::Call->new($node->function_name, \@unknown);
+}
 sub perlgen_sum {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( '.join(' + ', @arg_code).' )';
 }
 
-sub fn_negative {
+sub fn_negative :Pure {
 	@_ == 1 or die "Can only negate a single value, not a list\n";
 	return -$_[0];
 }
@@ -113,13 +130,31 @@ sub perlgen_negative {
 }
 
 *fn_mul= *List::Util::product;
+__PACKAGE__->MODIFY_CODE_ATTRIBUTES(\&fn_mul, 'Pure');
+sub simplify_mul {
+	my ($self, $node)= @_;
+	my ($const, @unknown)= (1);
+	for (@{ $node->parameters }) {
+		if ($_->is_constant) {
+			$const *= $_->evaluate($self);
+		} else {
+			push @unknown, $_;
+		}
+	}
+	return $node if @unknown == @{ $node->parameters };
+	my $const_node= Language::FormulaEngine::Parser::Node::Number->new($const);
+	# anything times 0 is 0
+	return $const_node unless $const != 0 && @unknown;
+	unshift @unknown, $const_node if $const != 1;
+	return Language::FormulaEngine::Parser::Node::Call->new($node->function_name, \@unknown);
+}
 sub perlgen_mul {
 	my ($self, $compiler, $node)= @_;
 	my @arg_code= map $compiler->perlgen($_), @{$node->parameters};
 	return '( '.join(' * ', @arg_code).' )';
 }
 
-sub fn_div {
+sub fn_div :Pure {
 	@_ == 2 or die "div() takes exactly two arguments\n";
 	$_[1] or die "division by zero\n";
 	return $_[0] / $_[1];
@@ -130,11 +165,27 @@ sub perlgen_div {
 	return '( '.join(' / ', @arg_code).' )';
 }
 
-sub nodeval_and { # customize nodeval_ to provide lazy evaluation of arguments
+sub nodeval_and :Pure { # customize nodeval_ to provide lazy evaluation of arguments
 	my ($self, $node)= @_;
 	$_->evaluate($self) or return 0
 		for @{ $node->parameters };
 	return 1;
+}
+sub simplify_and {
+	my ($self, $node)= @_;
+	my @unknown;
+	for (@{ $node->parameters }) {
+		if ($_->is_constant) {
+			# true constant causes expression to always evaluate true
+			return Language::FormulaEngine::Parser::Node::Number->new(0)
+				unless $_->evaluate($self);
+		} else {
+			push @unknown, $_;
+		}
+	}
+	return Language::FormulaEngine::Parser::Node::Number->new(1) unless @unknown;
+	return $node if @unknown == @{ $node->parameters };
+	return Language::FormulaEngine::Parser::Node::Call->new($node->function_name, \@unknown);
 }
 sub perlgen_and {
 	my ($self, $compiler, $node)= @_;
@@ -142,11 +193,27 @@ sub perlgen_and {
 	return '( ('.join(' and ', @arg_code).')? 1 : 0)';
 }
 
-sub nodeval_or {
+sub nodeval_or :Pure {
 	my ($self, $node)= @_;
 	$_->evaluate($self) and return 1
 		for @{ $node->parameters };
 	return 0;
+}
+sub simplify_or {
+	my ($self, $node)= @_;
+	my @unknown;
+	for (@{ $node->parameters }) {
+		if ($_->is_constant) {
+			# true constant causes expression to always evaluate true
+			return Language::FormulaEngine::Parser::Node::Number->new(1)
+				if $_->evaluate($self);
+		} else {
+			push @unknown, $_;
+		}
+	}
+	return Language::FormulaEngine::Parser::Node::Number->new(0) unless @unknown;
+	return $node if @unknown == @{ $node->parameters };
+	return Language::FormulaEngine::Parser::Node::Call->new($node->function_name, \@unknown);
 }
 sub perlgen_or {
 	my ($self, $compiler, $node)= @_;
@@ -154,7 +221,7 @@ sub perlgen_or {
 	return '( ('.join(' or ', @arg_code).')? 1 : 0)';
 }
 
-sub fn_not {
+sub fn_not :Pure {
 	@_ == 1 or die "Too many arguments to 'not'\n";
 	return $_[0]? 0 : 1;
 }
@@ -165,7 +232,7 @@ sub perlgen_not {
 	return '('.$arg_code[0].'? 0 : 1)';
 }
 
-sub fn_compare {
+sub fn_compare :Pure {
 	my $left= shift;
 	while (@_) {
 		my $op= shift;
@@ -219,12 +286,12 @@ Throw an NA exception.
 
 =cut
 
-sub fn_choose {
+sub fn_choose :Pure {
 	$_[0] > 0 and $_[0] < @_ or die "CHOSE() selector out of bounds ($_[0])";
 	return $_[$_[0]];
 }
 
-sub nodeval_if { # customize nodeval_ to provide lazy evaluation of arguments
+sub nodeval_if :Pure { # customize nodeval_ to provide lazy evaluation of arguments
 	my ($self, $node)= @_;
 	@{$node->parameters} == 3 or die "IF(test, when_true, when_false) requires all 3 parameters\n";
 	my $bool= $node->parameters->[0]->evaluate($self);
@@ -237,7 +304,7 @@ sub perlgen_if {
 	return '( '.$arg_code[0].'? '.$arg_code[1].' : '.$arg_code[2].' )';
 }
 
-sub nodeval_iferror {
+sub nodeval_iferror :Pure {
 	my ($self, $node)= @_;
 	my $ret;
 	try {
@@ -254,7 +321,7 @@ sub perlgen_iferror {
 	return '(do { local $@; my $x; eval { $x=('.$arg_code[0].'); 1 }? $x : ('.$arg_code[1].') })';
 }
 
-sub nodeval_ifs {
+sub nodeval_ifs :Pure {
 	my ($self, $node)= @_;
 	(my @todo= @{$node->parameters}) & 1
 		and die "IFS(cond, val, ...) requires an even number of parameters\n";
@@ -277,7 +344,7 @@ sub perlgen_ifs {
 	return $expr;
 }
 
-sub fn_na {
+sub fn_na :Pure {
 	die ErrNA("NA");
 }
 
@@ -420,17 +487,18 @@ Return ratio of opposite/adjacent for an angle.
 *fn_acot= *Math::Trig::acot;
 *fn_asin= *Math::Trig::asin;
 *fn_atan= *Math::Trig::atan;
+__PACKAGE__->MODIFY_CODE_ATTRIBUTES($_, 'Pure') for \&fn_abs, \&fn_acos, \&fn_acot, \&fn_asin, \&fn_atan;
 
-sub fn_atan2 {
+sub fn_atan2 :Pure {
 	# Perl differs in argument order from popular spreadsheet programs
 	atan2($_[1], $_[0])
 }
 
-sub fn_average {
+sub fn_average :Pure {
 	List::Util::sum0(@_) / @_;
 }
 
-sub fn_base {
+sub fn_base :Pure {
 	my ($num, $radix, $min_length)= @_;
 	my $digits= '';
 	while ($num > 0) {
@@ -445,7 +513,9 @@ sub fn_base {
 *fn_cos= *CORE::cos;
 *fn_degrees= *Math::Trig::rad2deg;
 *fn_exp= *CORE::exp;
-sub fn_fact {
+__PACKAGE__->MODIFY_CODE_ATTRIBUTES($_, 'Pure') for \&fn_cos, \&fn_degrees, \&fn_exp;
+
+sub fn_fact :Pure {
 	my $n= int($_[0]);
 	return 1 unless $n;
 	$n > 0 or die ErrNUM("Can't compute factorial of negative number '$n'");
@@ -454,39 +524,41 @@ sub fn_fact {
 
 *fn_min= *List::Util::min;
 *fn_max= *List::Util::max;
-sub fn_mod {
+__PACKAGE__->MODIFY_CODE_ATTRIBUTES($_, 'Pure') for \&fn_min, \&fn_max;
+sub fn_mod :Pure {
 	my ($num, $modulo)= @_;
 	$modulo+0 or die ErrNUM("MOD($num, $modulo): can't claculate modulus-0");
 	$num % $modulo;
 }
 
 *fn_pi= *Math::Trig::pi;
+__PACKAGE__->MODIFY_CODE_ATTRIBUTES($_, 'Pure') for \&fn_pi;
 
-sub fn_round {
+sub fn_round :Pure {
 	my ($num, $digits)= @_;
 	my $scale= 0.1 ** ($_[1] || 0);
 	return round($num / $scale) * $scale;
 }
 
 our $epsilon= 5e-14; # fudge factor for avoiding floating point rounding errors
-sub fn_ceiling {
+sub fn_ceiling :Pure {
 	my ($num, $step)= @_;
 	$step= 1 unless defined $step;
 	return POSIX::ceil($num / $step - $epsilon) * $step;
 }
-sub fn_floor {
+sub fn_floor :Pure {
 	my ($num, $step)= @_;
 	$step= 1 unless defined $step;
 	return POSIX::floor($num / $step + $epsilon) * $step;
 }
-sub fn_roundup {
+sub fn_roundup :Pure {
 	fn_ceiling($_[0], 0.1 ** ($_[1] || 0));
 }
-sub fn_rounddown {
+sub fn_rounddown :Pure {
 	fn_floor($_[0], 0.1 ** ($_[1] || 0));
 }
 
-sub fn_power {
+sub fn_power :Pure {
 	@_ == 2 or die ErrInval("POWER() takes 2 arguments");
 	return $_[0] ** $_[1];
 }
@@ -495,6 +567,7 @@ sub fn_power {
 *fn_sin= *CORE::sin;
 *fn_sqrt= *CORE::sqrt;
 *fn_tan= *Math::Trig::tan;
+__PACKAGE__->MODIFY_CODE_ATTRIBUTES($_, 'Pure') for \&fn_sin, \&fn_sqrt, \&fn_tan;
 
 =head2 String Functions
 
@@ -569,8 +642,9 @@ sub fn_clean {
 *fn_code= *CORE::ord;
 *fn_upper= *CORE::uc;
 *fn_lower= *CORE::lc;
+__PACKAGE__->MODIFY_CODE_ATTRIBUTES($_, 'Pure') for \&fn_char, \&fn_code, \&fn_upper, \&fn_lower;
 
-sub fn_replace {
+sub fn_replace :Pure {
 	@_ == 4 or die ErrInval("REPLACE() takes 4 arguments");
 	my ($text, $ofs, $n, $newtext)= @_;
 	substr($text, $ofs, $n)= $newtext;
@@ -580,19 +654,21 @@ sub fn_replace {
 *fn_substr= *CORE::substr;
 *fn_len= *CORE::length;
 
-sub fn_concatenate {
+sub fn_concatenate :Pure {
 	join '', @_;
 }
 *fn_concat= *fn_concatenate;
 *fn_join= *CORE::join;
 
-sub fn_find {
+__PACKAGE__->MODIFY_CODE_ATTRIBUTES($_, 'Pure') for \&fn_substr, \&fn_len, \&fn_join;
+
+sub fn_find :Pure {
 	my ($needle, $haystack, $ofs)= @_;
 	$ofs= 1 unless $ofs && $ofs > 0;
 	return index($haystack, $needle, $ofs) + 1;
 }
 
-sub fn_fixed {
+sub fn_fixed :Pure {
 	my ($number, $places, $comma)= @_;
 	$places= 2 unless defined $places;
 	$comma= ',' unless defined $comma && (!$comma or $comma eq '.');
@@ -606,7 +682,7 @@ sub fn_fixed {
 	return $number;
 }
 
-sub fn_trim {
+sub fn_trim :Pure {
 	my $str= shift;
 	$str =~ s/\p{Space}+/ /g;
 	$str =~ s/^ //;
@@ -667,20 +743,20 @@ Return the year field of a date.
 
 =cut
 
-sub fn_datevalue {
+sub fn_datevalue :Pure {
 	my $date= shift;
 	return $date if ref $date && ref($date)->isa('DateTime');
 	try { DateTime::Format::Flexible->parse_datetime($date) }
 	catch { die ErrInval("Not a date: '$date'") };
 }
 BEGIN { *_date= *fn_datevalue; } # for convenience
-sub fn_date {
+sub fn_date :Pure {
 	my ($y, $m, $d)= @_;
 	try { DateTime->new(year => $y, month => $m, day => $d) }
 	catch { die ErrInval(ref $_ && $_->can("message")? $_->message : "$_") };
 }
 
-sub fn_datedif {
+sub fn_datedif :Pure {
 	my ($start, $end, $unit)= @_;
 	$unit= uc($unit || '');
 	if ($unit eq 'Y') { return _date($end)->delta_md(_date($start))->in_units('years') }
@@ -688,38 +764,38 @@ sub fn_datedif {
 	if ($unit eq 'D') { return _date($end)->delta_days(_date($start))->in_units('days') }
 	die ErrInval "Unsupported datedif unit '$unit'";
 }
-sub fn_day {
+sub fn_day :Pure {
 	_date($_[0])->day
 }
-sub fn_days {
+sub fn_days :Pure {
 	my ($end, $start)= ( _date($_[0]), _date($_[1]) );
 	my $n= $end->delta_days($start)->in_units('days');
 	return $end > $start? $n : -$n;
 }
-sub fn_eomonth {
+sub fn_eomonth :Pure {
 	my ($start, $m_ofs)= @_;
 	$m_ofs= 0 unless @_ > 1;
 	_date($start)->clone->add(months => $m_ofs+1)->truncate(to => 'month')->subtract(days => 1);
 }
-sub fn_hour {
+sub fn_hour :Pure {
 	_date($_[0])->hour
 }
-sub fn_minute {
+sub fn_minute :Pure {
 	_date($_[0])->minute
 }
-sub fn_month {
+sub fn_month :Pure {
 	_date($_[0])->month
 }
 sub fn_now {
 	DateTime->now;
 }
-sub fn_second {
+sub fn_second :Pure {
 	_date($_[0])->second
 }
 sub fn_today {
 	DateTime->now->truncate(to => 'day');
 }
-sub fn_weekday {
+sub fn_weekday :Pure {
 	my ($date, $standard)= @_;
 	my $day_mon1= _date($date)->day_of_week;
 	return $day_mon1 % 7 + 1 if !$standard or $standard == 1;
@@ -728,7 +804,7 @@ sub fn_weekday {
 	return ($day_mon1 - ($standard - 10)) % 7 + 1 if $standard >= 12 && $standard <= 17;
 	die ErrInval("No known weekday standard '$standard'");
 }
-sub fn_year {
+sub fn_year :Pure {
 	_date($_[0])->year
 }
 
