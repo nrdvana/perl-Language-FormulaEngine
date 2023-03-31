@@ -405,7 +405,7 @@ sub parse_unit_expr {
 	}
 	
 	if ($self->{token_type} eq '0') {
-		die "Expected expression component near (end of input)";
+		die "Expected expression, but reached end of input\n";
 	}
 	
 	die "Unexpected token $self->{token_type} '$self->{token_value}' near ".$self->token_context."\n";
