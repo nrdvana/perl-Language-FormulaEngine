@@ -19,7 +19,7 @@ sub test_parser {
 			'unknown',
 		],
 		[ 'known * unknown',
-			'mul( 42, unknown )'
+			'mul( 42, unknown )',
 		],
 		[ 'known > 5',
 			1
@@ -30,6 +30,12 @@ sub test_parser {
 		[ '(known and (1 or unknown))',
 			1
 		],
+		[ 'known * 0 * rand()',
+			0
+		],
+		[ 'rand() * known',
+			'mul( 42, rand() )'
+		],
 	);
 	
 	my $parser= Language::FormulaEngine::Parser->new;
@@ -37,10 +43,10 @@ sub test_parser {
 		variables => { known => 42 }
 	);
 	for (@tests) {
-		my ($str, $simplified)= @$_;
+		my ($str, $simplified, $s_fnset, $s_varset)= @$_;
 		my $parse_tree= $parser->parse($str) or die "parse($str)";
 		my $simplified_tree= $parse_tree->simplify($namespace) or die "simplify($parse_tree)";
-		is( $parser->deparse( $simplified_tree ), $simplified );
+		is( $parser->deparse( $simplified_tree ), $simplified, $str );
 	}
 	
 	done_testing;

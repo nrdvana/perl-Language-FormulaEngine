@@ -167,6 +167,32 @@ sub _coerce_instance {
 
 =head1 METHODS
 
+=head2 parse
+
+  my $formula= $fe->parse( $formula_text, \$error );
+
+Return a L<Language::FormulaEngine::Formula|Formula object> representing the expression.
+Dies if it can't parse the expression, unless you supply C<$error> then the error is
+stores in that scalarref and the methods returns C<undef>.
+
+=cut
+
+sub parse {
+	my ($self, $text, $error_ref)= @_;
+	unless ($self->parser->parse($text)) {
+		die $self->parser->error unless $error_ref;
+		$$error_ref= $self->parser->error;
+		return undef;
+	}
+	return Language::FormulaEngine::Formula->new(
+		engine     => $self,
+		orig_text  => $text,
+		parse_tree => $self->parser->parse_tree,
+		functions  => $self->parser->functions,
+		symbols    => $self->parser->symbols,
+	);
+}
+
 =head2 evaluate
 
   my $value= $fe->evaluate( $formula_text, \%variables );
@@ -276,4 +302,5 @@ Not suitable for un-trusted strings, according to BUGS documentation.
 
 =cut
 
+require Language::FormulaEngine::Formula;
 1;

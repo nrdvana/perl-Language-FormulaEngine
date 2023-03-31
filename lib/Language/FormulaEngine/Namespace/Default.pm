@@ -106,10 +106,9 @@ sub simplify_sum {
 			push @unknown, $_;
 		}
 	}
-	return $node if @unknown == @{ $node->parameters };
-	my $const_node= Language::FormulaEngine::Parser::Node::Number->new($const);
-	return $const_node unless @unknown;
-	push @unknown, $const_node if $const != 0;
+	return $node if @unknown == @{ $node->parameters } && @unknown > 1;
+	push @unknown, Language::FormulaEngine::Parser::Node::Number->new($const) if $const != 0;
+	return $unknown[0] unless @unknown > 1;
 	return Language::FormulaEngine::Parser::Node::Call->new($node->function_name, \@unknown);
 }
 sub perlgen_sum {
@@ -141,11 +140,10 @@ sub simplify_mul {
 			push @unknown, $_;
 		}
 	}
-	return $node if @unknown == @{ $node->parameters };
-	my $const_node= Language::FormulaEngine::Parser::Node::Number->new($const);
-	# anything times 0 is 0
-	return $const_node unless $const != 0 && @unknown;
-	unshift @unknown, $const_node if $const != 1;
+	return $node if @unknown == @{ $node->parameters } && @unknown > 1;
+	return Language::FormulaEngine::Parser::Node::Number->new(0) if $const == 0;
+	unshift @unknown, Language::FormulaEngine::Parser::Node::Number->new($const) if $const != 1;
+	return $unknown[0] unless @unknown > 1;
 	return Language::FormulaEngine::Parser::Node::Call->new($node->function_name, \@unknown);
 }
 sub perlgen_mul {
