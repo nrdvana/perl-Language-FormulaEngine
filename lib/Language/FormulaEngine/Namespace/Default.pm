@@ -813,7 +813,7 @@ sub fn_year :Pure {
 # I could of course just wrap each core function with a function defined in this
 # package, but it would be a needless performance hit for modern perl, and clutter
 # the code above.
-unless (CORE->can("abs")) {
+if ($] < 5.016) {
 	require Sub::Util;
 	my $stash= \%Language::FormulaEngine::Namespace::Default::;
 	for my $fn (grep /^fn_/, keys %$stash) {
